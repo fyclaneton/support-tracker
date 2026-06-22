@@ -28,7 +28,10 @@ async function kvSet(key, value) {
 async function getSpamList() {
   const raw = await kvGet(SPAM_KEY);
   if (!raw) return [];
-  try { return JSON.parse(typeof raw === "string" ? raw : JSON.stringify(raw)); } catch { return []; }
+  try {
+    const parsed = JSON.parse(typeof raw === "string" ? raw : JSON.stringify(raw));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
 }
 
 export default async function handler(req, res) {

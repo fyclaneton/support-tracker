@@ -122,7 +122,7 @@ export default function Home() {
   // Load spam senders list
   useEffect(() => {
     if (!session) return;
-    fetch("/api/spam-senders").then(r=>r.json()).then(d=>{ if(d.senders) setSpamSenders(d.senders); }).catch(console.error);
+    fetch("/api/spam-senders").then(r=>r.json()).then(d=>{ if(d.senders) setSpamSenders(Array.isArray(d.senders) ? d.senders : []); }).catch(console.error);
   }, [session]);
 
   const analyzeThreads = useCallback(async (rawThreads) => {
@@ -223,7 +223,7 @@ export default function Home() {
   }
 
   const allRows = threads
-    .filter(t => !spamSenders.includes(t.customer))
+    .filter(t => !Array.isArray(spamSenders) || !spamSenders.includes(t.customer))
     .map(t=>({
       ...t,
       status:   overrides[t.id]?.status   || t.status,
@@ -466,10 +466,10 @@ export default function Home() {
                               <button
                                 className={styles.spamBtn}
                                 onClick={e=>{e.stopPropagation();flagSenderAsSpam(r.customer);}}
-                                disabled={spamSenders.includes(r.customer)||r.customer==="Unknown"}
+                                disabled={Array.isArray(spamSenders) && spamSenders.includes(r.customer)||r.customer==="Unknown"}
                                 title="Hide all threads from this sender"
                               >
-                                🚫 {spamSenders.includes(r.customer)?"Blocked":"Block sender"}
+                                🚫 {Array.isArray(spamSenders) && spamSenders.includes(r.customer)?"Blocked":"Block sender"}
                               </button>
                             </div>
                             {savingId===r.id && <span style={{fontSize:12,color:"var(--text-secondary)",paddingBottom:8}}>💾 Saving…</span>}
