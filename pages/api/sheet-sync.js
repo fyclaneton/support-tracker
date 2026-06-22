@@ -1,7 +1,3 @@
-// Handles creating and syncing the shared Google Sheet
-// POST /api/sheet-sync { action: "create", threads } → creates sheet, saves ID to KV, returns url
-// POST /api/sheet-sync { action: "update", thread }  → updates or inserts a single row
-
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { google } from "googleapis";
@@ -26,20 +22,15 @@ async function kvSet(key, value) {
   });
 }
 
-const HEADER = ["Thread ID", "Date", "Customer", "Subject", "Category", "Status", "Flags", "AI Summary", "Resolution", "Has Reply", "Last Updated By", "Last Updated At"];
+const HEADER = ["Thread ID","Date","Customer","Subject","Category","Status","Flags","AI Summary","Resolution","Has Reply","Last Updated By","Last Updated At"];
 
 function threadToRow(t, updatedBy = "") {
   return [
-    t.id || "",
-    t.date || "",
-    t.customer || "",
-    t.subject || "",
-    t.category || "",
-    t.status || "",
-    (t.flags || []).join(", "),
-    t.summary || "",
-    t.resolution || "",
-    t.hasSent ? "Yes" : "No",
+    t.id||"", t.date||"", t.customer||"", t.subject||"",
+    t.category||"", t.status||"",
+    (t.flags||[]).join(", "),
+    t.summary||"", t.resolution||"",
+    t.hasSent?"Yes":"No",
     updatedBy,
     new Date().toLocaleString(),
   ];
@@ -60,7 +51,7 @@ export default async function handler(req, res) {
 
   const { action, threads, thread } = req.body;
 
-  // ── CREATE: initialise the shared sheet with all current threads ──
+  // ── CREATE ──
   if (action === "create") {
     try {
       const spreadsheet = await sheets.spreadsheets.create({
@@ -69,70 +60,85 @@ export default async function handler(req, res) {
           sheets: [{ properties: { title: "Threads" } }],
         },
       });
-      const spreadsheetId = spreadsheet.data.spreadsheetId;
 
-      // Write header + all rows
-      const rows = (threads || []).map(t => threadToRow(t, session.user?.email));
+      const spreadsheetId = spreadsheet.data.spreadsheetId;
+      // Use the actual sheetId returned, not assume 0
+      const sheetId = spreadsheet.data.sheets[0].properties.sheetId;
+
+      // Write header + rows
+      const rows = (threads||[]).map(t => threadToRow(t, session.user?.email));
       await sheets.spreadsheets.values.update({
         spreadsheetId, range: "Threads!A1", valueInputOption: "RAW",
         requestBody: { values: [HEADER, ...rows] },
       });
 
-      // Format header row
+      // Format using the real sheetId
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId,
         requestBody: {
           requests: [
             {
               repeatCell: {
-                range: { sheetId: 0, startRowIndex: 0, endRowIndex: 1 },
-                cell: { userEnteredFormat: { textFormat: { bold: true }, backgroundColor: { red: 0.92, green: 0.92, blue: 0.92 } } },
+                range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+                cell: {
+                  userEnteredFormat: {
+                    textFormat: { bold: true },
+                    backgroundColor: { red: 0.92, green: 0.92, blue: 0.92 },
+                  },
+                },
                 fields: "userEnteredFormat(textFormat,backgroundColor)",
               },
             },
-            { autoResizeDimensions: { dimensions: { sheetId: 0, dimension: "COLUMNS", startIndex: 0, endIndex: HEADER.length } } },
-            { updateSheetProperties: { properties: { sheetId: 0, gridProperties: { frozenRowCount: 1 } }, fields: "gridProperties.frozenRowCount" } },
+            {
+              autoResizeDimensions: {
+                dimensions: { sheetId, dimension: "COLUMNS", startIndex: 0, endIndex: HEADER.length },
+              },
+            },
+            {
+              updateSheetProperties: {
+                properties: { sheetId, gridProperties: { frozenRowCount: 1 } },
+                fields: "gridProperties.frozenRowCount",
+              },
+            },
           ],
         },
       });
 
-      // Save the spreadsheet ID to KV so all users share it
-      await kvSet(SHEET_KEY, JSON.stringify({ spreadsheetId, url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}`, createdBy: session.user?.email, createdAt: new Date().toISOString() }));
+      const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
+      await kvSet(SHEET_KEY, JSON.stringify({
+        spreadsheetId, url,
+        createdBy: session.user?.email,
+        createdAt: new Date().toISOString(),
+      }));
 
-      return res.status(200).json({ spreadsheetId, url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}` });
+      return res.status(200).json({ spreadsheetId, url });
     } catch (err) {
       console.error("Sheet create error:", err);
       return res.status(500).json({ error: err.message });
     }
   }
 
-  // ── UPDATE: upsert a single thread row ──
+  // ── UPDATE a single row ──
   if (action === "update") {
     try {
       const stored = await kvGet(SHEET_KEY);
-      if (!stored) return res.status(404).json({ error: "No shared sheet exists yet. Have the sheet owner create it first." });
-
+      if (!stored) return res.status(404).json({ error: "No shared sheet exists yet." });
       const { spreadsheetId } = JSON.parse(stored);
 
-      // Read all rows to find the row index by thread ID
       const readRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: "Threads!A:A" });
-      const ids = (readRes.data.values || []).map(r => r[0]);
-      const rowIndex = ids.indexOf(thread.id); // 0-based; row 0 is header
-
+      const ids = (readRes.data.values||[]).map(r=>r[0]);
+      const rowIndex = ids.indexOf(thread.id);
       const newRow = threadToRow(thread, session.user?.email);
 
       if (rowIndex > 0) {
-        // Row exists — update it
-        const range = `Threads!A${rowIndex + 1}:L${rowIndex + 1}`;
         await sheets.spreadsheets.values.update({
-          spreadsheetId, range, valueInputOption: "RAW",
-          requestBody: { values: [newRow] },
+          spreadsheetId, range: `Threads!A${rowIndex+1}:L${rowIndex+1}`,
+          valueInputOption: "RAW", requestBody: { values: [newRow] },
         });
       } else {
-        // New thread — append it
         await sheets.spreadsheets.values.append({
-          spreadsheetId, range: "Threads!A:L", valueInputOption: "RAW",
-          requestBody: { values: [newRow] },
+          spreadsheetId, range: "Threads!A:L",
+          valueInputOption: "RAW", requestBody: { values: [newRow] },
         });
       }
 
@@ -143,7 +149,7 @@ export default async function handler(req, res) {
     }
   }
 
-  // ── GET SHEET INFO ──
+  // ── INFO ──
   if (action === "info") {
     try {
       const stored = await kvGet(SHEET_KEY);
