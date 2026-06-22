@@ -84,3 +84,13 @@
 .sheetSetup { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 12px 16px; background: var(--bg); font-size: 13px; color: var(--text-secondary); }
 .sheetsLink { font-size: 13px; color: #1D9E75; text-decoration: none; font-weight: 500; }
 .sheetsLink:hover { text-decoration: underline; }
+
+.toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); background: #1a1a1a; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 13px; z-index: 100; white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+.spamBtn { padding: 6px 12px; font-size: 12px; border: 0.5px solid #FAECE7; border-radius: 8px; background: #FAECE7; color: #993C1D; cursor: pointer; white-space: nowrap; }
+.spamBtn:disabled { opacity: 0.5; cursor: default; }
+.spamBtn:hover:not(:disabled) { background: #f5ddd5; }
+.spamListBtn { font-size: 12px; padding: 5px 12px; border-radius: 6px; border: 0.5px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; }
+.spamListBtn:hover { background: var(--bg-secondary); }
+.spamPanel { background: #FEF0EE; border-bottom: 0.5px solid #f5ddd5; padding: 12px 2rem; }
+.spamPanelTitle { font-size: 12px; font-weight: 500; color: #993C1D; margin: 0; }
+.spamChip { display: flex; align-items: center; gap: 6px; background: #fff; border: 0.5px solid #f5ddd5; border-radius: 20px; padding: 4px 10px; font-size: 12px; color: #993C1D; }

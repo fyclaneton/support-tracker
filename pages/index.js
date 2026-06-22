@@ -81,24 +81,28 @@ function exportCSV(threads) {
 
 export default function Home() {
   const { data: session, status } = useSession();
-  const [threads, setThreads]           = useState([]);
-  const [loading, setLoading]           = useState(false);
-  const [analyzing, setAnalyzing]       = useState(false);
+  const [threads, setThreads]             = useState([]);
+  const [loading, setLoading]             = useState(false);
+  const [analyzing, setAnalyzing]         = useState(false);
   const [nextPageToken, setNextPageToken] = useState(null);
-  const [search, setSearch]             = useState("");
-  const [filterCat, setFilterCat]       = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterFlag, setFilterFlag]     = useState("");
-  const [page, setPage]                 = useState(0);
-  const [expandedId, setExpandedId]     = useState(null);
-  const [overrides, setOverrides]       = useState({});
-  const [savingId, setSavingId]         = useState(null);
-  const [lastSync, setLastSync]         = useState(null);
-  const [syncing, setSyncing]           = useState(false);
-  const [newCount, setNewCount]         = useState(0);
-  const [sheetInfo, setSheetInfo]       = useState(null); // { exists, url, spreadsheetId, createdBy }
+  const [search, setSearch]               = useState("");
+  const [filterCat, setFilterCat]         = useState("");
+  const [filterStatus, setFilterStatus]   = useState("");
+  const [filterFlag, setFilterFlag]       = useState("");
+  const [page, setPage]                   = useState(0);
+  const [expandedId, setExpandedId]       = useState(null);
+  const [overrides, setOverrides]         = useState({});
+  const [savingId, setSavingId]           = useState(null);
+  const [lastSync, setLastSync]           = useState(null);
+  const [syncing, setSyncing]             = useState(false);
+  const [newCount, setNewCount]           = useState(0);
+  const [sheetInfo, setSheetInfo]         = useState(null);
   const [sheetCreating, setSheetCreating] = useState(false);
-  const [sheetSyncing, setSheetSyncing] = useState(false);
+  const [sheetError, setSheetError]       = useState(null);
+  const [sheetSyncing, setSheetSyncing]   = useState(false);
+  const [spamSenders, setSpamSenders]     = useState([]);
+  const [spamToast, setSpamToast]         = useState(null);
+  const [showSpamList, setShowSpamList]   = useState(false);
   const syncTimer = useRef(null);
   const PAGE_SIZE = 10;
 
@@ -113,6 +117,12 @@ export default function Home() {
     if (!session) return;
     fetch("/api/sheet-sync", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ action:"info" }) })
       .then(r=>r.json()).then(d=>setSheetInfo(d)).catch(console.error);
+  }, [session]);
+
+  // Load spam senders list
+  useEffect(() => {
+    if (!session) return;
+    fetch("/api/spam-senders").then(r=>r.json()).then(d=>{ if(d.senders) setSpamSenders(d.senders); }).catch(console.error);
   }, [session]);
 
   const analyzeThreads = useCallback(async (rawThreads) => {
@@ -159,15 +169,11 @@ export default function Home() {
     return ()=>clearInterval(syncTimer.current);
   }, [session, fetchThreads]);
 
-  // Save override to KV + sync that row to the shared sheet
   async function setOverride(id, field, value) {
     setOverrides(prev=>({ ...prev, [id]: { ...prev[id], [field]:value } }));
     setSavingId(id);
     try {
-      // 1. Save to KV
       await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field, value }) });
-
-      // 2. Sync to shared sheet if it exists
       if (sheetInfo?.exists) {
         setSheetSyncing(true);
         const thread = allRows.find(t=>t.id===id);
@@ -180,22 +186,49 @@ export default function Home() {
     finally { setSavingId(null); setSheetSyncing(false); }
   }
 
-  // Create the shared sheet (sheet owner only does this once)
   async function createSharedSheet() {
     setSheetCreating(true);
+    setSheetError(null);
     try {
       const res = await fetch("/api/sheet-sync", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ action:"create", threads: allRows }) });
       const data = await res.json();
+      if (data.error) { setSheetError(data.error); return; }
       if (data.url) setSheetInfo({ exists:true, url:data.url, spreadsheetId:data.spreadsheetId, createdBy: session.user?.email });
-    } catch(e) { console.error(e); }
-    finally { setSheetCreating(false); }
+    } catch(e) {
+      setSheetError("Failed to create sheet. Make sure Google Sheets API and Drive API are enabled in Google Cloud.");
+    } finally { setSheetCreating(false); }
   }
 
-  const allRows = threads.map(t=>({
-    ...t,
-    status:   overrides[t.id]?.status   || t.status,
-    category: overrides[t.id]?.category || t.category,
-  }));
+  // Flag a sender as spam — hides all their threads
+  async function flagSenderAsSpam(customerEmail) {
+    if (!customerEmail || customerEmail === "Unknown") return;
+    try {
+      const res = await fetch("/api/spam-senders", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: customerEmail }) });
+      const data = await res.json();
+      if (data.senders) {
+        setSpamSenders(data.senders);
+        setExpandedId(null);
+        setSpamToast(`"${customerEmail}" flagged as spam — their threads are now hidden.`);
+        setTimeout(() => setSpamToast(null), 4000);
+      }
+    } catch(e) { console.error(e); }
+  }
+
+  async function removeFromSpam(email) {
+    try {
+      const res = await fetch("/api/spam-senders", { method:"DELETE", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email }) });
+      const data = await res.json();
+      if (data.senders) setSpamSenders(data.senders);
+    } catch(e) { console.error(e); }
+  }
+
+  const allRows = threads
+    .filter(t => !spamSenders.includes(t.customer))
+    .map(t=>({
+      ...t,
+      status:   overrides[t.id]?.status   || t.status,
+      category: overrides[t.id]?.category || t.category,
+    }));
 
   const filtered = allRows.filter(r=>{
     const q = search.toLowerCase();
@@ -207,8 +240,7 @@ export default function Home() {
 
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
   const pageRows   = filtered.slice(page*PAGE_SIZE, (page+1)*PAGE_SIZE);
-
-  const catCounts = {};
+  const catCounts  = {};
   allRows.forEach(r=>{ catCounts[r.category]=(catCounts[r.category]||0)+1; });
   const maxCat = Math.max(...Object.values(catCounts),1);
   const statusCounts = { Open:0, Pending:0, Resolved:0 };
@@ -231,6 +263,9 @@ export default function Home() {
 
   return (
     <div className={styles.wrap}>
+      {/* Toast notification */}
+      {spamToast && <div className={styles.toast}>{spamToast}</div>}
+
       <header className={styles.header}>
         <div className={styles.headerLeft}>
           <span className={styles.headerIcon}>📬</span>
@@ -242,15 +277,34 @@ export default function Home() {
           {newCount>0   && <button className={styles.newBadge} onClick={()=>{setNewCount(0);setPage(0);}}>{newCount} new thread{newCount>1?"s":""} — click to view</button>}
         </div>
         <div className={styles.headerRight}>
+          {spamSenders.length>0 && (
+            <button className={styles.spamListBtn} onClick={()=>setShowSpamList(v=>!v)}>
+              🚫 {spamSenders.length} blocked sender{spamSenders.length>1?"s":""}
+            </button>
+          )}
           {lastSync && <span className={styles.syncTime}>Synced {lastSync.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>}
           <span className={styles.userEmail}>{session.user?.email}</span>
           <button className={styles.signOutBtn} onClick={()=>signOut()}>Sign out</button>
         </div>
       </header>
 
-      <main className={styles.main}>
+      {/* Spam senders panel */}
+      {showSpamList && (
+        <div className={styles.spamPanel}>
+          <p className={styles.spamPanelTitle}>🚫 Blocked senders — their threads are hidden from the dashboard</p>
+          <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:8}}>
+            {spamSenders.map(email=>(
+              <div key={email} className={styles.spamChip}>
+                <span>{email}</span>
+                <button onClick={()=>removeFromSpam(email)} title="Unblock" style={{background:"none",border:"none",cursor:"pointer",color:"inherit",padding:"0 2px",fontSize:14}}>×</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
-        {/* Shared sheet banner */}
+      <main className={styles.main}>
+        {/* Sheet banner */}
         <div className={styles.sheetBanner}>
           {sheetInfo?.exists ? (
             <div className={styles.sheetActive}>
@@ -262,9 +316,12 @@ export default function Home() {
             </div>
           ) : (
             <div className={styles.sheetSetup}>
-              <span>📊 No shared sheet yet. The sheet owner should create it once — everyone else syncs to it automatically.</span>
+              <div>
+                <span>📊 No shared sheet yet. The sheet owner should create it once.</span>
+                {sheetError && <p style={{color:"#C0392B",fontSize:12,marginTop:4}}>⚠️ {sheetError}</p>}
+              </div>
               <button className={styles.btn} onClick={createSharedSheet} disabled={sheetCreating||allRows.length===0}>
-                {sheetCreating ? "Creating…" : "Create shared sheet"}
+                {sheetCreating ? "Creating… (this may take 10–15 sec)" : "Create shared sheet"}
               </button>
             </div>
           )}
@@ -404,8 +461,19 @@ export default function Home() {
                                 {STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
                               </select>
                             </div>
+                            <div style={{paddingBottom:2}}>
+                              <p className={styles.detailLabel} style={{marginBottom:4}}>Sender</p>
+                              <button
+                                className={styles.spamBtn}
+                                onClick={e=>{e.stopPropagation();flagSenderAsSpam(r.customer);}}
+                                disabled={spamSenders.includes(r.customer)||r.customer==="Unknown"}
+                                title="Hide all threads from this sender"
+                              >
+                                🚫 {spamSenders.includes(r.customer)?"Blocked":"Block sender"}
+                              </button>
+                            </div>
                             {savingId===r.id && <span style={{fontSize:12,color:"var(--text-secondary)",paddingBottom:8}}>💾 Saving…</span>}
-                            {savingId!==r.id && overrides[r.id] && <span style={{fontSize:12,color:"#1D9E75",paddingBottom:8}}>✓ Saved {sheetInfo?.exists?"& synced to sheet":""}</span>}
+                            {savingId!==r.id && overrides[r.id] && <span style={{fontSize:12,color:"#1D9E75",paddingBottom:8}}>✓ Saved{sheetInfo?.exists?" & synced":""}</span>}
                           </div>
                         </div>
                       </td>
