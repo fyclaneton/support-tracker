@@ -1,47 +1,46 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { google } from "googleapis";
-import { GoogleGenAI, Type } from "@google/genai";
 
-// Initialize the Gemini AI SDK
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-// Smart Spam Blacklist
-const SPAM_BLACKLIST = ["noreply@", "no-reply@", "billing@", "alert@", "newsletter@"];
-
-async function analyzeTicketWithAI(snippet, subject) {
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: `Analyze this support ticket subject and snippet:
-      Subject: ${subject}
-      Snippet: ${snippet}`,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            category: { 
-              type: Type.STRING, 
-              enum: ["Software", "Hardware", "Setup", "Connectivity", "Contact request", "Other"] 
-            },
-            inquirySummary: { type: Type.STRING },
-            recommendedFix: { type: Type.STRING }
-          },
-          required: ["category", "inquirySummary", "recommendedFix"],
-        }
-      }
-    });
-
-    return JSON.parse(response.text);
-  } catch (error) {
-    console.error("AI Analysis failed, falling back to defaults:", error);
-    return {
-      category: "Other",
-      inquirySummary: snippet.slice(0, 120),
-      recommendedFix: "Review manual logs."
-    };
-  }
+function categorize(text) {
+  const s = text.toLowerCase();
+  if (s.includes("connect") || s.includes("communicat") || s.includes("link"))
+    return "Connectivity";
+  if (
+    s.includes("uccnc") ||
+    s.includes("software") ||
+    s.includes("program") ||
+    s.includes("limit") ||
+    s.includes("units") ||
+    s.includes("post processor") ||
+    s.includes("icon")
+  )
+    return "Software";
+  if (
+    s.includes("axis") ||
+    s.includes("step") ||
+    s.includes("motor") ||
+    s.includes("controller") ||
+    s.includes("spoiler") ||
+    s.includes("spindle") ||
+    s.includes("router")
+  )
+    return "Hardware";
+  if (
+    s.includes("set up") ||
+    s.includes("setup") ||
+    s.includes("install") ||
+    s.includes("restart")
+  )
+    return "Setup";
+  if (
+    s.includes("phone") ||
+    s.includes("contact") ||
+    s.includes("call") ||
+    s.includes("speak")
+  )
+    return "Contact request";
+  return "Other";
 }
 
 function deriveStatus(labels, hasSentReply) {
@@ -85,6 +84,16 @@ function extractSubject(messages) {
   return (
     headers.find((h) => h.name === "Subject")?.value || "(no subject)"
   );
+}
+
+function decodeBody(part) {
+  if (!part) return "";
+  try {
+    const data = part.body?.data || "";
+    return Buffer.from(data, "base64").toString("utf-8").slice(0, 500);
+  } catch {
+    return "";
+  }
 }
 
 function getSnippet(messages) {
@@ -136,29 +145,18 @@ export default async function handler(req, res) {
           });
 
           const messages = threadRes.data.messages || [];
-          
-          // Smart Spam Filtering System
-          const customerEmail = extractCustomer(messages);
-          const isSpam = SPAM_BLACKLIST.some(spamTerm => customerEmail.toLowerCase().includes(spamTerm));
-          if (isSpam) return null;
-
           const labels = messages.flatMap((m) => m.labelIds || []);
           const hasSentReply = labels.includes("SENT");
           const snippet = getSnippet(messages);
-          const subject = extractSubject(messages);
-
-          // Trigger True AI Insights
-          const aiAnalysis = await analyzeTicketWithAI(snippet, subject);
+          const category = categorize(snippet + " " + extractSubject(messages));
 
           return {
             id: t.id,
             date: extractDate(messages),
-            customer: customerEmail,
-            subject: subject,
+            customer: extractCustomer(messages),
+            subject: extractSubject(messages),
             snippet,
-            category: aiAnalysis.category,
-            inquirySummary: aiAnalysis.inquirySummary,
-            recommendedFix: aiAnalysis.recommendedFix,
+            category,
             status: deriveStatus(labels, hasSentReply),
             hasSent: hasSentReply,
             messageCount: messages.length,
