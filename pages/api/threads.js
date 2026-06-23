@@ -115,7 +115,8 @@ export default async function handler(req, res) {
     oauth2Client.setCredentials({ access_token: session.accessToken });
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-    const searchQuery = query || 'subject:(help OR "customer support" OR issue OR "not working" OR complaint OR problem OR setup OR error)';
+    // Broad query: anything not from ourselves, not newsletters
+    const searchQuery = query || 'in:inbox -from:me -label:sent';
 
     const listRes = await gmail.users.threads.list({
       userId: "me",

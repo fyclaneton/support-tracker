@@ -16,7 +16,7 @@ const MACHINE_MODELS = [
   "M.22",
   "M+450P","M+350",
 ];
-const MODEL_SERIES = ["A","W","B","C","D","E","G","M","M+"];
+const MODEL_SERIES = ["A","W","B","C","D","E","G","M+","M"];
 const FLAG_LABELS = {
   "no-reply": { label: "No reply", emoji: "🔴" },
   urgent:     { label: "Urgent",   emoji: "⚠️" },
@@ -589,7 +589,7 @@ export default function Home() {
           <select className={styles.select} value={filterModel} onChange={e=>{setFilterModel(e.target.value);setPage(0);}}>
             <option value="">All models</option>
             {MODEL_SERIES.map(series => {
-              const seriesModels = MACHINE_MODELS.filter(m => m.startsWith(series));
+              const seriesModels = MACHINE_MODELS.filter(m => m.startsWith(series + ".") || m.startsWith(series + "+"));
               return seriesModels.length > 0 ? (
                 <optgroup key={series} label={`${series} Series`}>
                   {seriesModels.map(m => <option key={m} value={m}>{m}</option>)}
