@@ -1,8 +1,9 @@
+
+
+export const config = { maxDuration: 30 };
 // POST /api/flag-not-service { threadId, action }
 // action: "mark"   — marks as Unrelated in KV (keeps it, just re-categorizes)
 // action: "remove" — fully removes from KV index + thread store + Sheet
-
-export const config = { maxDuration: 30 };
 
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";

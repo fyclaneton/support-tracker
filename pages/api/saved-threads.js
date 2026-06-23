@@ -1,7 +1,8 @@
-// GET /api/saved-threads
-// Returns all threads saved in Upstash KV
+
 
 export const config = { maxDuration: 30 };
+// GET /api/saved-threads
+// Returns all threads saved in Upstash KV
 
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";

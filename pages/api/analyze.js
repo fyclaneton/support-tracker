@@ -2,7 +2,6 @@ import { isDefiniteJunk } from "../../lib/junk-filter";
 import { normalizeModel } from "../../lib/models";
 
 export const config = { maxDuration: 60 };
-
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
 function isObviousSpam(thread) {

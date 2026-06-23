@@ -1,7 +1,8 @@
-// POST /api/clear-saved
-// Clears all saved thread data from Upstash so bulk import can start fresh
+
 
 export const config = { maxDuration: 30 };
+// POST /api/clear-saved
+// Clears all saved thread data from Upstash so bulk import can start fresh
 
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
