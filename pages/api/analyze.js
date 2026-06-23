@@ -6,16 +6,14 @@ export const config = { maxDuration: 60 };
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
-// Hard-code spam detection — no AI needed for obvious junk
-const SPAM_FROM = ["quickbooks","intuit.com","qbo.intuit","shopify","myshopify","shopifyemail","noreply","no-reply","donotreply","do-not-reply","mailer-daemon","hellorep","klaviyo","mailchimp","sendgrid","constantcontact","squarespace","wix.com","paypal","stripe.com","square.com","fedex","ups.com","usps.com","dhl.com","amazon.com","notifications@","newsletter","billing@","invoice@","receipts@","payments@","bounces@","campaigns@","marketing@","promo@"];
-const SPAM_SUBJECT = ["quickbooks sync","connector summary","sync summary","shopify store","your order","order confirmed","order shipped","password reset","verify your email","confirm your email","invoice #","receipt for","payment received","out of office","auto-reply","automatic reply","unsubscribe","% off","free shipping","limited time","special offer","act now"];
+import { isDefiniteJunk } from "../../lib/junk-filter";
 
 function isObviousSpam(thread) {
-  const from = (thread.customerEmail || thread.customer || "").toLowerCase();
-  const sub = (thread.subject || "").toLowerCase();
-  if (SPAM_FROM.some(p => from.includes(p))) return true;
-  if (SPAM_SUBJECT.some(p => sub.includes(p))) return true;
-  return false;
+  return isDefiniteJunk(
+    thread.customerEmail || thread.customer || "",
+    thread.subject || "",
+    thread.customer || ""
+  );
 }
 
 async function summarizeThread(thread) {

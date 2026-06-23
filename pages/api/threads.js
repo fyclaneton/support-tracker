@@ -3,6 +3,7 @@ import { authOptions } from "./auth/[...nextauth]";
 import { google } from "googleapis";
 import { detectMachineModel } from "../../lib/models";
 import { kvGet } from "../../lib/kv";
+import { isDefiniteJunk } from "../../lib/junk-filter";
 
 function extractCustomer(messages) {
   for (const msg of messages) {
@@ -183,7 +184,7 @@ export default async function handler(req, res) {
           const fromHeader = messages[0]?.payload?.headers?.find(h => h.name === "From")?.value || "";
 
           // Hard filter before AI — drop obvious junk immediately
-          if (isDefiniteJunk(fromHeader, subject)) return null;
+          if (isDefiniteJunk(fromHeader, subject, extractCustomer(messages) || "")) return null;
 
           // Drop if no external customer found
           const customer = extractCustomer(messages);

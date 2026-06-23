@@ -154,7 +154,7 @@ export default async function handler(req, res) {
           const subject = extractSubject(messages);
           const fromHeader = messages[0]?.payload?.headers?.find(h=>h.name==="From")?.value || "";
 
-          if (isDefiniteJunk(fromHeader, subject)) return null;
+          if (isDefiniteJunk(fromHeader, subject, extractCustomer(messages) || "")) return null;
           const customer = extractCustomer(messages);
           if (!customer) return null;
 

@@ -9,14 +9,7 @@ import { authOptions } from "./auth/[...nextauth]";
 import { google } from "googleapis";
 import { detectMachineModel } from "../../lib/models";
 import { kvGet, kvSet, kvKeys } from "../../lib/kv";
-
-const JUNK_FROM = ["quickbooks","intuit.com","qbo.intuit","shopify","myshopify","shopifyemail","noreply","no-reply","donotreply","do-not-reply","mailer-daemon","hellorep","klaviyo","mailchimp","sendgrid","constantcontact","squarespace","wix.com","paypal","stripe.com","square.com","fedex","ups.com","usps.com","dhl.com","amazon.com","notifications@","newsletter","billing@","invoice@","receipts@","payments@","bounces@","campaigns@","marketing@","promo@","deals@","offers@"];
-const JUNK_SUBJECT = ["quickbooks sync","connector summary","sync summary","shopify store","your order","order confirmed","order shipped","password reset","verify your email","confirm your","invoice #","receipt for","payment received","out of office","auto-reply","automatic reply","unsubscribe","% off","free shipping","limited time","special offer","act now"];
-
-function isJunk(fromHeader, subject) {
-  const f = fromHeader.toLowerCase(), s = subject.toLowerCase();
-  return JUNK_FROM.some(p => f.includes(p)) || JUNK_SUBJECT.some(p => s.includes(p));
-}
+import { isDefiniteJunk } from "../../lib/junk-filter";
 
 function extractCustomer(messages) {
   for (const msg of messages) {
@@ -217,7 +210,7 @@ export default async function handler(req, res) {
         const subject = extractSubject(messages);
         const fromHeader = messages[0]?.payload?.headers?.find(h=>h.name==="From")?.value||"";
 
-        if (isJunk(fromHeader, subject)) continue;
+        if (isDefiniteJunk(fromHeader, subject, extractCustomer(messages) || "")) continue;
         const customer = extractCustomer(messages);
         if (!customer) continue;
 
