@@ -170,19 +170,27 @@ export default function Home() {
   }, [session, fetchThreads]);
 
   async function setOverride(id, field, value) {
-    setOverrides(prev=>({ ...prev, [id]: { ...prev[id], [field]:value } }));
+    // 1. Optimistic UI update
+    setOverrides(prev => ({ ...prev, [id]: { ...prev[id], [field]: value, updatedAt: new Date().toISOString(), updatedBy: session.user?.email } }));
     setSavingId(id);
     try {
-      await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field, value }) });
+      // 2. Save to KV with retry
+      let kvRes = await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field, value }) });
+      if (!kvRes.ok) {
+        await new Promise(r => setTimeout(r, 600));
+        kvRes = await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field, value }) });
+      }
+      const kvData = kvRes.ok ? ((await kvRes.json())?.override || {}) : {};
+      // 3. Sync updated thread to sheet
       if (sheetInfo?.exists) {
         setSheetSyncing(true);
-        const thread = allRows.find(t=>t.id===id);
+        const thread = threads.find(t => t.id === id);
         if (thread) {
-          const updated = { ...thread, [field]: value };
-          await fetch("/api/sheet-sync", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ action:"update", thread: updated }) });
+          const updatedThread = { ...thread, status: field==="status" ? value : (kvData.status || overrides[id]?.status || thread.status), category: field==="category" ? value : (kvData.category || overrides[id]?.category || thread.category) };
+          await fetch("/api/sheet-sync", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ action:"update", thread: updatedThread }) });
         }
       }
-    } catch(e) { console.error(e); }
+    } catch(e) { console.error("Save failed:", e); }
     finally { setSavingId(null); setSheetSyncing(false); }
   }
 
@@ -202,16 +210,20 @@ export default function Home() {
   // Flag a sender as spam — hides all their threads
   async function flagSenderAsSpam(customerEmail) {
     if (!customerEmail || customerEmail === "Unknown") return;
+    // Optimistic update
+    setSpamSenders(prev => Array.isArray(prev) && !prev.includes(customerEmail) ? [...prev, customerEmail] : prev);
+    setExpandedId(null);
+    setSpamToast(`"${customerEmail}" blocked — threads hidden.`);
+    setTimeout(() => setSpamToast(null), 4000);
     try {
-      const res = await fetch("/api/spam-senders", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: customerEmail }) });
-      const data = await res.json();
-      if (data.senders) {
-        setSpamSenders(data.senders);
-        setExpandedId(null);
-        setSpamToast(`"${customerEmail}" flagged as spam — their threads are now hidden.`);
-        setTimeout(() => setSpamToast(null), 4000);
+      let res = await fetch("/api/spam-senders", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: customerEmail }) });
+      if (!res.ok) {
+        await new Promise(r => setTimeout(r, 600));
+        res = await fetch("/api/spam-senders", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ email: customerEmail }) });
       }
-    } catch(e) { console.error(e); }
+      const data = await res.json();
+      if (data.senders) setSpamSenders(Array.isArray(data.senders) ? data.senders : []);
+    } catch(e) { console.error("Block sender failed:", e); }
   }
 
   async function removeFromSpam(email) {
