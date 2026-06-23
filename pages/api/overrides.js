@@ -24,16 +24,22 @@ export default async function handler(req, res) {
     }
   }
 
-  // POST — save one override field
+  // POST — save one or more override fields
   if (req.method === "POST") {
-    const { id, field, value } = req.body;
+    const { id, field, value, ...extraFields } = req.body;
     if (!id || !field) return res.status(400).json({ error: "Missing id or field" });
     try {
       const key = `override:${id}`;
       const existing = (await kvGet(key)) || {};
+      // Merge primary field + any extra fields (e.g. flags when resolving)
+      const extras = {};
+      Object.entries(extraFields).forEach(([k, v]) => {
+        if (!["updatedAt","updatedBy"].includes(k)) extras[k] = v;
+      });
       const updated = {
         ...existing,
         [field]: value,
+        ...extras,
         updatedAt: new Date().toISOString(),
         updatedBy: session.user?.email || "unknown",
       };

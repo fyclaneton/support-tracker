@@ -471,6 +471,7 @@ export default function Home() {
       .then(r => r.json())
       .then(data => {
         if (data.threads?.length) {
+          // Saved threads already have updates baked in from update-thread API
           setThreads(data.threads);
           setSavedTotal(data.total || 0);
         }
@@ -503,9 +504,27 @@ export default function Home() {
     }
     setSavingId(id);
     try {
-      let kvRes = await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field, value, ...extraUpdates }) });
-      if (!kvRes.ok) { await new Promise(r=>setTimeout(r,600)); kvRes = await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field, value, ...extraUpdates }) }); }
+      // Save status/category/flags override
+      let kvRes = await fetch("/api/overrides", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ id, field, value, ...extraUpdates }),
+      });
+      if (!kvRes.ok) {
+        await new Promise(r=>setTimeout(r,600));
+        kvRes = await fetch("/api/overrides", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ id, field, value, ...extraUpdates }),
+        });
+      }
       const kvData = kvRes.ok ? ((await kvRes.json())?.override||{}) : {};
+
+      // Also update the saved thread record in Upstash so it persists on reload
+      try {
+        await fetch("/api/update-thread", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ id, updates: { [field]: value, ...extraUpdates } }),
+        });
+      } catch(e) { console.error("Thread update error:", e); }
       if (sheetInfo?.exists) {
         setSheetSyncing(true);
         const thread = threads.find(t=>t.id===id);
