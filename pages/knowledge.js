@@ -32,8 +32,24 @@ export default function Knowledge() {
   const [expanded, setExpanded]   = useState(null);
   const [deleting, setDeleting]   = useState(null);
   const [toast, setToast]         = useState(null);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillDone, setBackfillDone] = useState(false);
 
-  function showToast(msg) { setToast(msg); setTimeout(() => setToast(null), 3000); }
+  function showToast(msg) { setToast(msg); setTimeout(() => setToast(null), 4000); }
+
+  async function backfill() {
+    setBackfilling(true);
+    try {
+      const res = await fetch("/api/kb-backfill", { method: "POST" });
+      const data = await res.json();
+      if (data.ok) {
+        showToast(`✓ Added ${data.added} resolved threads to knowledge base (${data.skipped} skipped).`);
+        setBackfillDone(true);
+        load(); // Reload entries
+      }
+    } catch(e) { console.error(e); showToast("Backfill failed — check console."); }
+    finally { setBackfilling(false); }
+  }
 
   async function load() {
     setLoading(true);
@@ -88,6 +104,19 @@ export default function Knowledge() {
       </header>
 
       <main className={styles.main}>
+        {/* Backfill banner */}
+        {!backfillDone && (
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10,padding:"10px 16px",background:"var(--bg)",border:"0.5px solid var(--border)",borderRadius:"var(--radius)",marginBottom:"1rem"}}>
+            <div>
+              <p style={{fontSize:13,fontWeight:500,margin:"0 0 2px"}}>📥 Import existing resolved threads</p>
+              <p style={{fontSize:12,color:"var(--text-secondary)",margin:0}}>Add all already-resolved threads from your database to the knowledge base in one go.</p>
+            </div>
+            <button className={styles.btn} onClick={backfill} disabled={backfilling}>
+              {backfilling ? "Importing… (this may take a minute)" : "Import resolved threads"}
+            </button>
+          </div>
+        )}
+
         {/* Search & filter */}
         <div className={styles.controls} style={{marginBottom:"1.5rem"}}>
           <input
