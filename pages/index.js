@@ -618,6 +618,22 @@ export default function Home() {
     } catch(e) { console.error("Remove thread error:", e); }
   }
 
+  async function clearSavedData() {
+    if (!window.confirm("This will clear all saved thread data from the database so you can re-import with better spam filtering. Continue?")) return;
+    try {
+      const res = await fetch("/api/clear-saved", { method: "POST" });
+      const data = await res.json();
+      if (data.ok) {
+        setThreads([]);
+        setSavedTotal(0);
+        setBulkProgress(null);
+        setBulkDone(false);
+        setSpamToast(`Cleared ${data.deleted} saved threads. Ready for fresh import.`);
+        setTimeout(() => setSpamToast(null), 5000);
+      }
+    } catch(e) { console.error(e); }
+  }
+
   async function addFilterRule() {
     if (!newRuleValue.trim()) return;
     setSavingRule(true);
@@ -900,14 +916,19 @@ export default function Home() {
             {bulkDone && <span style={{fontSize:12,color:"#1D9E75",fontWeight:500}}>✓ Import complete</span>}
             {bulkRunning && <span className={styles.aiPill} style={{fontSize:11}}>🤖 Importing &amp; analyzing…</span>}
           </div>
-          <div style={{display:"flex",gap:8}}>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
             {bulkRunning
               ? <button className={styles.btn} onClick={()=>setBulkRunning(false)}>Stop</button>
-              : bulkDone
-              ? <span style={{fontSize:12,color:"var(--text-secondary)"}}>Run again to catch new emails</span>
-              : <button className={styles.btn} onClick={()=>startBulkImport()} disabled={bulkRunning}>
-                  {bulkProgress ? "Resume import" : "Start bulk import"}
-                </button>
+              : <>
+                  <button className={styles.btn} onClick={()=>startBulkImport()} disabled={bulkRunning}>
+                    {bulkProgress ? "Resume import" : "Start bulk import"}
+                  </button>
+                  {savedTotal > 0 && (
+                    <button className={styles.btn} style={{color:"#993C1D",borderColor:"#993C1D"}} onClick={clearSavedData}>
+                      🗑 Clear &amp; re-import
+                    </button>
+                  )}
+                </>
             }
           </div>
         </div>

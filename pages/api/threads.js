@@ -1,9 +1,9 @@
+import { isDefiniteJunk } from "../../lib/junk-filter";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { google } from "googleapis";
 import { detectMachineModel } from "../../lib/models";
 import { kvGet } from "../../lib/kv";
-import { isDefiniteJunk } from "../../lib/junk-filter";
 
 function extractCustomer(messages) {
   for (const msg of messages) {

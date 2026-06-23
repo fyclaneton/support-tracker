@@ -1,3 +1,4 @@
+import { isDefiniteJunk } from "../../lib/junk-filter";
 // POST /api/bulk-import { action: "start"|"next", pageToken, existingIds }
 // Fetches one page of historical emails, filters, analyzes, saves to KV + Sheet
 // Returns { threads, nextPageToken, totalEstimate, saved, skipped }
@@ -9,7 +10,6 @@ import { authOptions } from "./auth/[...nextauth]";
 import { google } from "googleapis";
 import { detectMachineModel } from "../../lib/models";
 import { kvGet, kvSet, kvKeys } from "../../lib/kv";
-import { isDefiniteJunk } from "../../lib/junk-filter";
 
 function extractCustomer(messages) {
   for (const msg of messages) {
