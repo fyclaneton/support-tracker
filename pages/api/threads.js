@@ -1,14 +1,28 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { google } from "googleapis";
-
 import { detectMachineModel } from "../../lib/models";
+import { kvGet } from "../../lib/kv";
+
+// Built-in junk senders/domains — always excluded at Gmail query level
+const BUILTIN_EXCLUDES = [
+  "quickbooks", "intuit.com",
+  "shopify", "myshopify.com", "shopifyemail.com",
+  "noreply", "no-reply", "donotreply", "do-not-reply",
+  "notifications@", "notification@",
+  "alerts@", "mailer-daemon",
+  "hellorep.ai", "hellorep",
+  "klaviyo.com", "mailchimp", "sendgrid",
+  "squarespace", "wix.com",
+  "paypal", "stripe.com",
+  "fedex.com", "ups.com", "usps.com", "dhl.com",
+];
 
 function extractCustomer(messages) {
   for (const msg of messages) {
     const headers = msg.payload?.headers || [];
     const from = headers.find(h => h.name === "From")?.value || "";
-    if (from && !from.includes("i2rcnc") && !from.includes("noreply") && !from.includes("no-reply") && !from.includes("do-not-reply")) {
+    if (from && !from.toLowerCase().includes("i2rcnc") && !from.toLowerCase().includes("noreply") && !from.toLowerCase().includes("no-reply") && !from.toLowerCase().includes("do-not-reply")) {
       const match = from.match(/^([^<]+)</);
       if (match) return match[1].trim();
       const emailMatch = from.match(/([^@\s]+@[^\s>]+)/);
@@ -22,7 +36,7 @@ function extractCustomerEmail(messages) {
   for (const msg of messages) {
     const headers = msg.payload?.headers || [];
     const from = headers.find(h => h.name === "From")?.value || "";
-    if (from && !from.includes("i2rcnc") && !from.includes("noreply") && !from.includes("no-reply") && !from.includes("do-not-reply")) {
+    if (from && !from.toLowerCase().includes("i2rcnc") && !from.toLowerCase().includes("noreply") && !from.toLowerCase().includes("no-reply") && !from.toLowerCase().includes("do-not-reply")) {
       const emailMatch = from.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
       if (emailMatch) return emailMatch[0];
     }
@@ -39,16 +53,13 @@ function extractDate(messages) {
 }
 
 function extractLastCustomerMessageDate(messages) {
-  // Find the most recent message FROM the customer (not from us)
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     const headers = msg.payload?.headers || [];
     const from = headers.find(h => h.name === "From")?.value || "";
-    if (!from.includes("i2rcnc") && !from.includes("noreply")) {
+    if (!from.toLowerCase().includes("i2rcnc") && !from.toLowerCase().includes("noreply")) {
       const date = headers.find(h => h.name === "Date")?.value;
-      if (date) {
-        try { return new Date(date).toISOString(); } catch {}
-      }
+      if (date) { try { return new Date(date).toISOString(); } catch {} }
     }
   }
   return null;
@@ -66,42 +77,76 @@ function decodeBase64(data) {
   } catch { return ""; }
 }
 
-function extractTextFromPart(part) {
-  if (!part) return "";
+function stripHtml(html) {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 800);
+}
+
+function extractTextFromPart(part, depth = 0) {
+  if (!part || depth > 6) return "";
   if (part.mimeType === "text/plain" && part.body?.data) {
-    return decodeBase64(part.body.data).slice(0, 800);
+    const text = decodeBase64(part.body.data).trim();
+    if (text.length > 20) return text.slice(0, 800);
   }
-  if (part.parts) {
+  if (part.mimeType === "text/html" && part.body?.data) {
+    const stripped = stripHtml(decodeBase64(part.body.data));
+    if (stripped.length > 20) return stripped;
+  }
+  if (part.parts?.length) {
     for (const p of part.parts) {
-      const text = extractTextFromPart(p);
-      if (text) return text;
+      if (p.mimeType === "text/plain") { const t = extractTextFromPart(p, depth+1); if (t) return t; }
     }
+    for (const p of part.parts) {
+      if (p.mimeType === "text/html") { const t = extractTextFromPart(p, depth+1); if (t) return t; }
+    }
+    for (const p of part.parts) { const t = extractTextFromPart(p, depth+1); if (t) return t; }
   }
   return "";
 }
 
-function getSnippetAndBody(message) {
-  const snippet = (message.snippet || "")
-    .replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&").slice(0, 300);
-  const body = extractTextFromPart(message.payload).slice(0, 600);
-  return { snippet, body };
+function cleanSnippet(snippet) {
+  return (snippet || "").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
 function buildThreadContent(messages) {
   const customerMsg = messages.find(m => {
     const from = m.payload?.headers?.find(h => h.name === "From")?.value || "";
-    return !from.includes("i2rcnc") && !from.includes("noreply");
-  });
-  const { snippet: s1, body: b1 } = customerMsg ? getSnippetAndBody(customerMsg) : { snippet: "", body: "" };
+    return !from.toLowerCase().includes("i2rcnc") && !from.toLowerCase().includes("noreply") && !from.toLowerCase().includes("no-reply");
+  }) || messages[0];
+  const body1 = extractTextFromPart(customerMsg?.payload) || cleanSnippet(customerMsg?.snippet);
   const lastMsg = messages[messages.length - 1];
-  const { snippet: s2, body: b2 } = lastMsg ? getSnippetAndBody(lastMsg) : { snippet: "", body: "" };
-  return [b1 || s1, b2 || s2].filter(Boolean).join(" | reply: ").slice(0, 1000) || "No content available";
+  const isLastFromUs = (lastMsg?.payload?.headers?.find(h => h.name === "From")?.value || "").toLowerCase().includes("i2rcnc");
+  const body2 = (lastMsg && lastMsg !== customerMsg) ? extractTextFromPart(lastMsg.payload) : "";
+  const parts = [body1];
+  if (body2) parts.push((isLastFromUs ? "Our reply: " : "") + body2.slice(0, 300));
+  return parts.filter(Boolean).join(" | ").slice(0, 1200) || "No content available";
 }
 
 function hoursSince(isoDate) {
   if (!isoDate) return null;
-  const diff = Date.now() - new Date(isoDate).getTime();
-  return Math.round(diff / (1000 * 60 * 60));
+  return Math.round((Date.now() - new Date(isoDate).getTime()) / (1000 * 60 * 60));
+}
+
+// Client-side filter: check thread against custom rules
+function passesCustomRules(messages, subject, customRules) {
+  if (!customRules?.length) return true;
+  const fromHeader = messages[0]?.payload?.headers?.find(h => h.name === "From")?.value?.toLowerCase() || "";
+  const subjectLower = subject.toLowerCase();
+  const snippet = cleanSnippet(messages[0]?.snippet).toLowerCase();
+
+  for (const rule of customRules) {
+    const v = rule.value.toLowerCase();
+    if (rule.type === "sender" && fromHeader.includes(v)) return false;
+    if (rule.type === "domain" && fromHeader.includes(v)) return false;
+    if (rule.type === "keyword" && (subjectLower.includes(v) || snippet.includes(v))) return false;
+  }
+  return true;
 }
 
 export default async function handler(req, res) {
@@ -115,8 +160,21 @@ export default async function handler(req, res) {
     oauth2Client.setCredentials({ access_token: session.accessToken });
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-    // Pull all inbox threads — AI handles spam filtering
-    const searchQuery = query || "in:inbox";
+    // Load custom filter rules from KV
+    let customRules = [];
+    try {
+      const raw = await kvGet("shared:filter-rules");
+      customRules = Array.isArray(raw) ? raw : [];
+    } catch {}
+
+    // Build Gmail query with built-in exclusions + custom sender/domain rules
+    const customExcludes = customRules
+      .filter(r => r.type === "sender" || r.type === "domain")
+      .map(r => `-from:${r.value}`);
+    const builtinExcludes = BUILTIN_EXCLUDES.map(s => `-from:${s}`);
+    const allExcludes = [...new Set([...builtinExcludes, ...customExcludes])].join(" ");
+
+    const searchQuery = query || `in:inbox ${allExcludes}`;
 
     const listRes = await gmail.users.threads.list({
       userId: "me",
@@ -131,21 +189,20 @@ export default async function handler(req, res) {
     const detailed = await Promise.all(
       threads.map(async (t) => {
         try {
-          const threadRes = await gmail.users.threads.get({
-            userId: "me",
-            id: t.id,
-            format: "full",
-          });
-
+          const threadRes = await gmail.users.threads.get({ userId: "me", id: t.id, format: "full" });
           const messages = threadRes.data.messages || [];
           const labels = messages.flatMap(m => m.labelIds || []);
           const hasSentReply = labels.includes("SENT");
           const subject = extractSubject(messages);
           const content = buildThreadContent(messages);
-          const { snippet } = getSnippetAndBody(messages[0]);
+          const { } = {};
+          const snippet = cleanSnippet(messages[0]?.snippet);
           const lastCustomerMsgDate = extractLastCustomerMessageDate(messages);
           const hoursWaiting = hasSentReply ? null : hoursSince(lastCustomerMsgDate);
           const machineModel = detectMachineModel(subject + " " + content);
+
+          // Apply keyword-based custom rules client-side
+          if (!passesCustomRules(messages, subject, customRules)) return null;
 
           return {
             id: t.id,
@@ -159,12 +216,10 @@ export default async function handler(req, res) {
             hasSent: hasSentReply,
             messageCount: messages.length,
             lastCustomerMsgDate,
-            hoursWaiting,      // hours since last customer message with no reply
-            machineModel,      // detected CNC model or null
+            hoursWaiting,
+            machineModel,
           };
-        } catch {
-          return null;
-        }
+        } catch { return null; }
       })
     );
 

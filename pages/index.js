@@ -336,6 +336,11 @@ export default function Home() {
   const [spamSenders, setSpamSenders]     = useState([]);
   const [spamToast, setSpamToast]         = useState(null);
   const [showSpamList, setShowSpamList]   = useState(false);
+  const [showFilters, setShowFilters]     = useState(false);
+  const [filterRules, setFilterRules]     = useState([]);
+  const [newRuleType, setNewRuleType]     = useState("sender");
+  const [newRuleValue, setNewRuleValue]   = useState("");
+  const [savingRule, setSavingRule]       = useState(false);
   const [customerHistory, setCustomerHistory] = useState(null);
   const syncTimer = useRef(null);
   const PAGE_SIZE = 10;
@@ -346,6 +351,7 @@ export default function Home() {
     fetch("/api/sheet-sync", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ action:"info" }) })
       .then(r=>r.json()).then(d=>setSheetInfo(d)).catch(console.error);
     fetch("/api/spam-senders").then(r=>r.json()).then(d=>{ if(d.senders) setSpamSenders(Array.isArray(d.senders)?d.senders:[]); }).catch(console.error);
+    fetch("/api/filter-rules").then(r=>r.json()).then(d=>{ if(d.rules) setFilterRules(Array.isArray(d.rules)?d.rules:[]); }).catch(console.error);
   }, [session]);
 
   const analyzeThreads = useCallback(async (rawThreads) => {
@@ -420,6 +426,25 @@ export default function Home() {
       if (data.url) setSheetInfo({ exists:true, url:data.url, spreadsheetId:data.spreadsheetId, createdBy: session.user?.email });
     } catch(e) { setSheetError("Failed to create sheet. Make sure Google Sheets & Drive APIs are enabled."); }
     finally { setSheetCreating(false); }
+  }
+
+  async function addFilterRule() {
+    if (!newRuleValue.trim()) return;
+    setSavingRule(true);
+    try {
+      const res = await fetch("/api/filter-rules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: newRuleType, value: newRuleValue.trim() }) });
+      const d = await res.json();
+      if (d.rules) { setFilterRules(d.rules); setNewRuleValue(""); }
+    } catch(e) { console.error(e); }
+    finally { setSavingRule(false); }
+  }
+
+  async function deleteFilterRule(id) {
+    try {
+      const res = await fetch("/api/filter-rules", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      const d = await res.json();
+      if (d.rules) setFilterRules(d.rules);
+    } catch(e) { console.error(e); }
   }
 
   async function flagSenderAsSpam(customerEmail) {
@@ -511,6 +536,7 @@ export default function Home() {
         </div>
         <div className={styles.headerRight}>
           {spamSenders.length>0 && <button className={styles.spamListBtn} onClick={()=>setShowSpamList(v=>!v)}>🚫 {spamSenders.length} blocked</button>}
+          <button className={styles.spamListBtn} onClick={()=>setShowFilters(v=>!v)}>⚙️ Filters {filterRules.length>0?`(${filterRules.length})`:""}</button>
           {lastSync && <span className={styles.syncTime}>Synced {lastSync.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>}
           <span className={styles.userEmail}>{session.user?.email}</span>
           <button className={styles.signOutBtn} onClick={()=>signOut()}>Sign out</button>
@@ -534,6 +560,51 @@ export default function Home() {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {showFilters && (
+        <div className={styles.spamPanel}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+            <div>
+              <p className={styles.spamPanelTitle} style={{color:"var(--text-primary)"}}>⚙️ Email Filter Rules</p>
+              <p style={{fontSize:11,color:"var(--text-secondary)",marginTop:2}}>Emails matching these rules are excluded before reaching the dashboard. Changes apply on next refresh.</p>
+            </div>
+            <button onClick={()=>setShowFilters(false)} style={{background:"none",border:"none",cursor:"pointer",color:"var(--text-secondary)",fontSize:18}}>×</button>
+          </div>
+
+          {/* Add new rule */}
+          <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+            <select className={styles.select} value={newRuleType} onChange={e=>setNewRuleType(e.target.value)}>
+              <option value="sender">Sender email/name</option>
+              <option value="domain">Domain (e.g. shopify.com)</option>
+              <option value="keyword">Subject keyword</option>
+            </select>
+            <input className={styles.searchInput} style={{maxWidth:280}} placeholder={newRuleType==="sender"?"e.g. johnny@hellorep.ai":newRuleType==="domain"?"e.g. quickbooks.com":"e.g. QuickBooks Connector"} value={newRuleValue} onChange={e=>setNewRuleValue(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addFilterRule();}}/>
+            <button className={styles.btn} onClick={addFilterRule} disabled={savingRule||!newRuleValue.trim()}>{savingRule?"Adding…":"Add rule"}</button>
+          </div>
+
+          {/* Built-in rules info */}
+          <div style={{marginBottom:12,padding:"8px 12px",background:"var(--bg-secondary)",borderRadius:8,fontSize:12,color:"var(--text-secondary)"}}>
+            <strong>Built-in exclusions (always active):</strong> QuickBooks, Shopify notifications, no-reply addresses, HelloRep, Klaviyo, Mailchimp, shipping carriers, PayPal, Stripe
+          </div>
+
+          {/* Custom rules list */}
+          {filterRules.length===0 ? (
+            <p style={{fontSize:12,color:"var(--text-secondary)"}}>No custom rules yet — add one above.</p>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {filterRules.map(rule=>(
+                <div key={rule.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--bg)",border:"0.5px solid var(--border)",borderRadius:8,padding:"7px 12px"}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <span style={{fontSize:11,background:"var(--bg-secondary)",padding:"2px 8px",borderRadius:20,color:"var(--text-secondary)",textTransform:"capitalize"}}>{rule.type}</span>
+                    <span style={{fontSize:13,fontWeight:500}}>{rule.value}</span>
+                  </div>
+                  <button onClick={()=>deleteFilterRule(rule.id)} style={{fontSize:12,color:"var(--text-secondary)",background:"none",border:"none",cursor:"pointer",padding:"2px 6px"}}>Remove</button>
+                </div>
+              ))}
             </div>
           )}
         </div>
