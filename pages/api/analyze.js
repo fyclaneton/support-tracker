@@ -64,7 +64,11 @@ Return ONLY a valid JSON array with exactly ${batch.length} objects. Each object
     try {
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 4000,
@@ -73,8 +77,8 @@ Return ONLY a valid JSON array with exactly ${batch.length} objects. Each object
       });
 
       const data = await response.json();
-      if (data.error) {
-        console.error("Anthropic error:", data.error);
+      if (data.error || !data.content) {
+        console.error("Anthropic error:", JSON.stringify(data.error || data));
         batch.forEach(t => allResults.push({ id: t.id, isSpam: false, category: "Other", summary: "Summary unavailable.", resolution: t.hasSent ? "Reply sent." : "Unresolved — no reply sent yet.", flags: t.hasSent ? [] : ["no-reply"], machineModel: null }));
         continue;
       }

@@ -351,8 +351,15 @@ export default function Home() {
   const syncTimer = useRef(null);
   const PAGE_SIZE = 10;
 
+  // If token refresh failed, force re-login
   useEffect(() => {
-    if (!session) return;
+    if (session?.error === "RefreshTokenError") {
+      signIn("google");
+    }
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || session.error) return;
     fetch("/api/overrides").then(r=>r.json()).then(d=>{ if(d.overrides) setOverrides(d.overrides); }).catch(console.error);
     fetch("/api/sheet-sync", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ action:"info" }) })
       .then(r=>r.json()).then(d=>setSheetInfo(d)).catch(console.error);
@@ -417,7 +424,7 @@ export default function Home() {
     finally { if (isSync) setSyncing(false); else setLoading(false); }
   }, [analyzeThreads]);
 
-  useEffect(() => { if (session) fetchThreads(null, false); }, [session]);
+  useEffect(() => { if (session && !session.error) fetchThreads(null, false); }, [session]);
   useEffect(() => {
     if (!session) return;
     syncTimer.current = setInterval(()=>fetchThreads(null,true), 2*60*1000);
