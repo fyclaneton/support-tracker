@@ -113,36 +113,7 @@ function hoursSince(isoDate) {
   return Math.round((Date.now() - new Date(isoDate).getTime()) / (1000 * 60 * 60));
 }
 
-// Hard-coded sender patterns to drop before AI (saves tokens + time)
-const JUNK_PATTERNS = [
-  "quickbooks", "intuit.com", "qbo.intuit", "shopify", "myshopify",
-  "noreply", "no-reply", "donotreply", "do-not-reply", "mailer-daemon",
-  "hellorep", "johnny", "klaviyo", "mailchimp", "sendgrid", "constantcontact",
-  "squarespace", "wix.com", "paypal", "stripe.com", "square.com",
-  "fedex", "ups.com", "usps.com", "dhl.com", "amazon.com", "ebay.com",
-  "notifications@", "notification@", "alerts@", "newsletter", "unsubscribe",
-  "billing@", "invoice@", "receipts@", "payments@", "bounces@",
-  "campaigns@", "marketing@", "promo@", "deals@", "offers@",
-  "support@shopify", "mail.shopify", "em.shopify",
-];
 
-const JUNK_SUBJECT_PATTERNS = [
-  "unsubscribe", "click here", "special offer", "limited time",
-  "% off", "free shipping", "act now", "expires soon",
-  "quickbooks sync", "connector summary", "sync summary",
-  "shopify store", "your order", "order confirmed", "order shipped",
-  "password reset", "verify your email", "confirm your",
-  "invoice #", "receipt for", "payment received", "payment confirmation",
-  "out of office", "auto-reply", "automatic reply",
-];
-
-function isDefiniteJunk(fromHeader, subject) {
-  const from = fromHeader.toLowerCase();
-  const sub = subject.toLowerCase();
-  if (JUNK_PATTERNS.some(p => from.includes(p))) return true;
-  if (JUNK_SUBJECT_PATTERNS.some(p => sub.includes(p))) return true;
-  return false;
-}
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);

@@ -1,36 +1,9 @@
+import { isDefiniteJunk } from "../../lib/junk-filter";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { google } from "googleapis";
 import { detectMachineModel } from "../../lib/models";
 import { kvGet } from "../../lib/kv";
-
-const JUNK_PATTERNS = [
-  "quickbooks", "intuit.com", "qbo.intuit", "shopify", "myshopify",
-  "noreply", "no-reply", "donotreply", "do-not-reply", "mailer-daemon",
-  "hellorep", "johnny", "klaviyo", "mailchimp", "sendgrid", "constantcontact",
-  "squarespace", "wix.com", "paypal", "stripe.com", "square.com",
-  "fedex", "ups.com", "usps.com", "dhl.com", "amazon.com", "ebay.com",
-  "notifications@", "notification@", "alerts@", "newsletter", "unsubscribe",
-  "billing@", "invoice@", "receipts@", "payments@", "bounces@",
-  "campaigns@", "marketing@", "promo@", "deals@", "offers@",
-];
-
-const JUNK_SUBJECT_PATTERNS = [
-  "unsubscribe", "special offer", "limited time", "% off",
-  "free shipping", "act now", "quickbooks sync", "connector summary",
-  "sync summary", "shopify store", "your order", "order confirmed",
-  "order shipped", "password reset", "verify your email", "confirm your",
-  "invoice #", "receipt for", "payment received", "payment confirmation",
-  "out of office", "auto-reply", "automatic reply",
-];
-
-function isDefiniteJunk(fromHeader, subject) {
-  const from = fromHeader.toLowerCase();
-  const sub = subject.toLowerCase();
-  if (JUNK_PATTERNS.some(p => from.includes(p))) return true;
-  if (JUNK_SUBJECT_PATTERNS.some(p => sub.includes(p))) return true;
-  return false;
-}
 
 function extractCustomer(messages) {
   for (const msg of messages) {
