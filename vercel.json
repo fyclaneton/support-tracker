@@ -1,0 +1,9 @@
+{
+  "functions": {
+    "pages/api/analyze.js":      { "maxDuration": 60 },
+    "pages/api/threads.js":      { "maxDuration": 60 },
+    "pages/api/history.js":      { "maxDuration": 60 },
+    "pages/api/save-threads.js": { "maxDuration": 60 },
+    "pages/api/sheet-sync.js":   { "maxDuration": 60 }
+  }
+}
