@@ -127,3 +127,5 @@
 
 .notServiceBtn { padding: 6px 12px; font-size: 12px; border: 0.5px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
 .notServiceBtn:hover { background: #FAEEDA; color: #854F0B; border-color: #854F0B; }
+
+.bulkBar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; background: #E6F1FB; border: 0.5px solid #185FA5; border-radius: var(--radius); margin-bottom: 8px; }

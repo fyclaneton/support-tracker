@@ -366,6 +366,8 @@ export default function Home() {
   const [bulkProgress, setBulkProgress]       = useState(null); // { loaded, total, saved }
   const [bulkDone, setBulkDone]               = useState(false);
   const [migrationDone, setMigrationDone]     = useState(false);
+  const [selectedIds, setSelectedIds]         = useState(new Set());
+  const [bulkUpdating, setBulkUpdating]       = useState(false);
   const [savedLoading, setSavedLoading]       = useState(false);
   const [savedTotal, setSavedTotal]           = useState(0);
   const [histTotal, setHistTotal]             = useState(null);
@@ -710,6 +712,58 @@ export default function Home() {
     } catch(e) { console.error(e); }
   }
 
+  function toggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === pageRows.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(pageRows.map(r => r.id)));
+    }
+  }
+
+  function selectAllFiltered() {
+    setSelectedIds(new Set(filtered.map(r => r.id)));
+  }
+
+  async function bulkSetStatus(status) {
+    if (!selectedIds.size) return;
+    setBulkUpdating(true);
+    const ids = [...selectedIds];
+    try {
+      for (const id of ids) {
+        const thread = threads.find(t => t.id === id);
+        const currentFlags = thread?.flags || [];
+        const extraUpdates = status === "Resolved" && currentFlags.includes("no-reply")
+          ? { flags: currentFlags.filter(f => f !== "no-reply") }
+          : {};
+
+        // Update local state
+        setOverrides(prev => ({ ...prev, [id]: { ...prev[id], status, ...extraUpdates, updatedAt: new Date().toISOString(), updatedBy: session.user?.email } }));
+        if (extraUpdates.flags) {
+          setThreads(prev => prev.map(t => t.id === id ? { ...t, flags: extraUpdates.flags } : t));
+        }
+
+        // Save to Upstash
+        await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field:"status", value: status, ...extraUpdates }) });
+        await fetch("/api/update-thread", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, updates: { status, ...extraUpdates } }) });
+
+        // Small delay to avoid rate limiting
+        await new Promise(r => setTimeout(r, 100));
+      }
+      setSelectedIds(new Set());
+      setSpamToast(`✓ ${ids.length} thread${ids.length > 1 ? "s" : ""} marked as ${status}.`);
+      setTimeout(() => setSpamToast(null), 3000);
+    } catch(e) { console.error("Bulk update error:", e); }
+    finally { setBulkUpdating(false); }
+  }
+
   async function addFilterRule() {
     if (!newRuleValue.trim()) return;
     setSavingRule(true);
@@ -1016,11 +1070,44 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Bulk action bar — shows when threads are selected */}
+        {selectedIds.size > 0 ? (
+          <div className={styles.bulkBar}>
+            <span style={{fontSize:13,fontWeight:500}}>{selectedIds.size} thread{selectedIds.size>1?"s":""} selected</span>
+            {filtered.length > pageRows.length && selectedIds.size === pageRows.length && (
+              <button className={styles.btn} style={{fontSize:12}} onClick={selectAllFiltered}>
+                Select all {filtered.length} filtered threads
+              </button>
+            )}
+            <div style={{display:"flex",gap:6,marginLeft:"auto"}}>
+              <button className={styles.btn} style={{background:"#EAF3DE",color:"#3B6D11",borderColor:"#3B6D11"}} onClick={()=>bulkSetStatus("Resolved")} disabled={bulkUpdating}>
+                {bulkUpdating?"Saving…":"✓ Mark Resolved"}
+              </button>
+              <button className={styles.btn} style={{background:"#E6F1FB",color:"#185FA5",borderColor:"#185FA5"}} onClick={()=>bulkSetStatus("Pending")} disabled={bulkUpdating}>
+                Mark Pending
+              </button>
+              <button className={styles.btn} style={{background:"#FAEEDA",color:"#854F0B",borderColor:"#854F0B"}} onClick={()=>bulkSetStatus("Open")} disabled={bulkUpdating}>
+                Mark Open
+              </button>
+              <button className={styles.btn} onClick={()=>setSelectedIds(new Set())}>✕ Deselect</button>
+            </div>
+          </div>
+        ) : null}
+
         {/* Table */}
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
               <tr>
+                <th style={{width:36,textAlign:"center"}}>
+                  <input
+                    type="checkbox"
+                    checked={pageRows.length > 0 && pageRows.every(r => selectedIds.has(r.id))}
+                    onChange={toggleSelectAll}
+                    title="Select all on this page"
+                    style={{cursor:"pointer"}}
+                  />
+                </th>
                 <th style={{width:85}}>Date</th>
                 <th style={{width:130}}>Customer</th>
                 <th>Subject &amp; AI summary</th>
@@ -1040,9 +1127,17 @@ export default function Home() {
                 <tr><td colSpan={7} style={{textAlign:"center",padding:"2rem",color:"var(--text-secondary)"}}>No threads match your filters.</td></tr>
               ) : pageRows.map(r=>(
                 <>
-                  <tr key={r.id} className={styles.tableRow} onClick={()=>setExpandedId(expandedId===r.id?null:r.id)}>
-                    <td style={{color:"var(--text-secondary)",fontSize:12}}>{r.date||"—"}</td>
-                    <td>
+                  <tr key={r.id} className={styles.tableRow}>
+                    <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(r.id)}
+                        onChange={()=>toggleSelect(r.id)}
+                        style={{cursor:"pointer"}}
+                      />
+                    </td>
+                    <td style={{color:"var(--text-secondary)",fontSize:12}} onClick={()=>setExpandedId(expandedId===r.id?null:r.id)}>{r.date||"—"}</td>
+                    <td onClick={()=>setExpandedId(expandedId===r.id?null:r.id)}>
                       <button className={styles.customerLink} onClick={e=>{e.stopPropagation();setCustomerHistory(r.customer);}} title="View customer history">
                         {r.customer}
                       </button>
