@@ -13,13 +13,27 @@ import { kvGet, kvSet, kvKeys } from "../../lib/kv";
 
 function extractCustomer(messages) {
   for (const msg of messages) {
-    const from = msg.payload?.headers?.find(h => h.name === "From")?.value || "";
+    const headers = msg.payload?.headers || [];
+    const from = headers.find(h => h.name === "From")?.value || "";
     const fl = from.toLowerCase();
+
+    // Shopify contact form — customer info in Reply-To header
+    if (fl.includes("mailer@shopify.com")) {
+      const replyTo = headers.find(h => h.name === "Reply-To")?.value || "";
+      if (replyTo) {
+        const match = replyTo.match(/^([^<]+)</);
+        if (match) return match[1].trim();
+        const em = replyTo.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+        if (em) return em[0];
+      }
+      return "Shopify Contact Form";
+    }
+
     if (from && !fl.includes("i2rcnc") && !fl.includes("noreply") && !fl.includes("no-reply") && !fl.includes("do-not-reply") && !fl.includes("mailer")) {
       const match = from.match(/^([^<]+)</);
       if (match) return match[1].trim();
-      const em = from.match(/([^@\s]+@[^\s>]+)/);
-      if (em) return em[1];
+      const em = from.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+      if (em) return em[0];
     }
   }
   return null;

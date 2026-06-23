@@ -10,6 +10,21 @@ function extractCustomer(messages) {
     const headers = msg.payload?.headers || [];
     const from = headers.find(h => h.name === "From")?.value || "";
     const fromLower = from.toLowerCase();
+
+    // Special case: Shopify contact form — "i2R CNC LLC (Shopify) <mailer@shopify.com>"
+    // Customer name/email is in the email body, not the From header
+    if (fromLower.includes("mailer@shopify.com")) {
+      // Try to get customer name from Reply-To header
+      const replyTo = headers.find(h => h.name === "Reply-To")?.value || "";
+      if (replyTo) {
+        const match = replyTo.match(/^([^<]+)</);
+        if (match) return match[1].trim();
+        const emailMatch = replyTo.match(/([^@\s]+@[^\s>]+)/);
+        if (emailMatch) return emailMatch[1];
+      }
+      return "Shopify Contact Form";
+    }
+
     if (from && !fromLower.includes("i2rcnc") && !fromLower.includes("noreply") && !fromLower.includes("no-reply") && !fromLower.includes("do-not-reply") && !fromLower.includes("mailer")) {
       const match = from.match(/^([^<]+)</);
       if (match) return match[1].trim();

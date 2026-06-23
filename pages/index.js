@@ -154,7 +154,7 @@ function CustomerHistoryModal({ customer, threads, onClose }) {
 }
 
 // ── Thread Detail Panel ──
-function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, onFlagNotService, onMarkUnrelated, spamSenders, modelSeries, allModels }) {
+function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, onFlagNotService, spamSenders, modelSeries, allModels }) {
   const [notes, setNotes] = useState([]);
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
@@ -458,11 +458,24 @@ export default function Home() {
   }, [session, fetchThreads]);
 
   async function setOverride(id, field, value) {
-    setOverrides(prev => ({ ...prev, [id]: { ...prev[id], [field]: value, updatedAt: new Date().toISOString(), updatedBy: session.user?.email } }));
+    // If marking as Resolved, also remove the no-reply flag
+    const extraUpdates = {};
+    if (field === "status" && value === "Resolved") {
+      const thread = threads.find(t => t.id === id);
+      const currentFlags = thread?.flags || [];
+      if (currentFlags.includes("no-reply")) {
+        extraUpdates.flags = currentFlags.filter(f => f !== "no-reply");
+      }
+    }
+    setOverrides(prev => ({ ...prev, [id]: { ...prev[id], [field]: value, ...extraUpdates, updatedAt: new Date().toISOString(), updatedBy: session.user?.email } }));
+    // Also update the thread flags in local state
+    if (extraUpdates.flags) {
+      setThreads(prev => prev.map(t => t.id === id ? { ...t, flags: extraUpdates.flags } : t));
+    }
     setSavingId(id);
     try {
-      let kvRes = await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field, value }) });
-      if (!kvRes.ok) { await new Promise(r=>setTimeout(r,600)); kvRes = await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field, value }) }); }
+      let kvRes = await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field, value, ...extraUpdates }) });
+      if (!kvRes.ok) { await new Promise(r=>setTimeout(r,600)); kvRes = await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field, value, ...extraUpdates }) }); }
       const kvData = kvRes.ok ? ((await kvRes.json())?.override||{}) : {};
       if (sheetInfo?.exists) {
         setSheetSyncing(true);
@@ -591,24 +604,11 @@ export default function Home() {
     await run();
   }
 
-  // Mark thread as Unrelated — stays visible but tagged
-  async function markUnrelated(threadId) {
-    setThreads(prev => prev.map(t => t.id === threadId ? { ...t, category: "Unrelated" } : t));
-    setSpamToast("Marked as Unrelated.");
-    setTimeout(() => setSpamToast(null), 3000);
-    try {
-      await fetch("/api/flag-not-service", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ threadId, action: "mark" }),
-      });
-    } catch(e) { console.error("Mark unrelated error:", e); }
-  }
-
-  // Fully remove thread — deletes from dashboard, Upstash, and Sheet
+  // Mark Unrelated — removes from dashboard, Upstash, and Sheet immediately
   async function flagNotOurService(threadId) {
     setThreads(prev => prev.filter(t => t.id !== threadId));
     setExpandedId(null);
-    setSpamToast("Thread removed from dashboard, database, and sheet.");
+    setSpamToast("Marked as Unrelated — removed from dashboard, database, and sheet.");
     setTimeout(() => setSpamToast(null), 4000);
     try {
       await fetch("/api/flag-not-service", {
@@ -987,7 +987,7 @@ export default function Home() {
                   {expandedId===r.id&&(
                     <tr key={r.id+"-detail"}>
                       <td colSpan={7} style={{padding:"0 12px 14px",background:"var(--bg-secondary)"}}>
-                        <ThreadDetail r={r} overrides={overrides} savingId={savingId} sheetInfo={sheetInfo} threads={threads} session={session} onOverride={setOverride} onBlock={flagSenderAsSpam} onFlagNotService={flagNotOurService} onMarkUnrelated={markUnrelated} spamSenders={spamSenders} modelSeries={MODEL_SERIES} allModels={MACHINE_MODELS}/>
+                        <ThreadDetail r={r} overrides={overrides} savingId={savingId} sheetInfo={sheetInfo} threads={threads} session={session} onOverride={setOverride} onBlock={flagSenderAsSpam} onFlagNotService={flagNotOurService} spamSenders={spamSenders} modelSeries={MODEL_SERIES} allModels={MACHINE_MODELS}/>
                       </td>
                     </tr>
                   )}
