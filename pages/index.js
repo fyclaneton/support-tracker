@@ -2,7 +2,7 @@ import { useSession, signIn, signOut } from "next-auth/react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import styles from "../styles/Home.module.css";
 
-const CATEGORIES = ["Software", "Hardware", "Setup", "Connectivity", "Contact request", "Other"];
+const CATEGORIES = ["Software", "Hardware", "Setup", "Connectivity", "Warranty/Repair", "Sales inquiry", "Contact request", "Unrelated", "Other"];
 const STATUSES = ["Open", "Pending", "Resolved"];
 // Full i2R model list
 const MACHINE_MODELS = [
@@ -35,7 +35,7 @@ const TEMPLATES = [
 const CAT_BG = {
   Software: { bg: "#EEEDFE", text: "#534AB7" }, Hardware: { bg: "#FAECE7", text: "#993C1D" },
   Setup: { bg: "#E1F5EE", text: "#0F6E56" }, Connectivity: { bg: "#FBEAF0", text: "#993556" },
-  "Contact request": { bg: "#F1EFE8", text: "#5F5E5A" }, Other: { bg: "#F1EFE8", text: "#5F5E5A" },
+  "Contact request": { bg: "#F1EFE8", text: "#5F5E5A" }, "Unrelated": { bg: "#F9ECEC", text: "#922B21" }, Other: { bg: "#F1EFE8", text: "#5F5E5A" },
 };
 const STATUS_COLORS = {
   Open:     { bg: "#FAEEDA", text: "#854F0B" },
@@ -154,7 +154,7 @@ function CustomerHistoryModal({ customer, threads, onClose }) {
 }
 
 // ── Thread Detail Panel ──
-function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, onFlagNotService, spamSenders, modelSeries, allModels }) {
+function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, onFlagNotService, onMarkUnrelated, spamSenders, modelSeries, allModels }) {
   const [notes, setNotes] = useState([]);
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
@@ -346,6 +346,8 @@ export default function Home() {
   const [bulkRunning, setBulkRunning]         = useState(false);
   const [bulkProgress, setBulkProgress]       = useState(null); // { loaded, total, saved }
   const [bulkDone, setBulkDone]               = useState(false);
+  const [savedLoading, setSavedLoading]       = useState(false);
+  const [savedTotal, setSavedTotal]           = useState(0);
   const [histTotal, setHistTotal]             = useState(null);
   const [histLoading, setHistLoading]         = useState(false);
   const [histAnalyzing, setHistAnalyzing]     = useState(false);
@@ -419,7 +421,12 @@ export default function Home() {
           return fresh.length ? [...fresh,...prev] : prev;
         });
       } else {
-        setThreads(prev => token ? [...prev,...analyzed] : analyzed);
+        // Always merge — never wipe saved threads loaded from Upstash
+        setThreads(prev => {
+          const existing = new Set(prev.map(t=>t.id));
+          const fresh = analyzed.filter(t=>!existing.has(t.id));
+          return token ? [...prev,...analyzed] : [...fresh,...prev];
+        });
       }
       setNextPageToken(data.nextPageToken||null);
       setLastSync(new Date());
@@ -427,7 +434,23 @@ export default function Home() {
     finally { if (isSync) setSyncing(false); else setLoading(false); }
   }, [analyzeThreads]);
 
-  useEffect(() => { if (session && !session.error) fetchThreads(null, false); }, [session]);
+  useEffect(() => {
+    if (!session || session.error) return;
+    // 1. Load saved threads from Upstash first (instant, persistent)
+    setSavedLoading(true);
+    fetch("/api/saved-threads")
+      .then(r => r.json())
+      .then(data => {
+        if (data.threads?.length) {
+          setThreads(data.threads);
+          setSavedTotal(data.total || 0);
+        }
+        // 2. Then fetch fresh emails from last 3 months, merge in new ones
+        fetchThreads(null, false);
+      })
+      .catch(() => fetchThreads(null, false))
+      .finally(() => setSavedLoading(false));
+  }, [session]);
   useEffect(() => {
     if (!session) return;
     syncTimer.current = setInterval(()=>fetchThreads(null,true), 2*60*1000);
@@ -568,19 +591,31 @@ export default function Home() {
     await run();
   }
 
-  // Flag a thread as "not our service" — removes from dashboard, KV, and sheet
+  // Mark thread as Unrelated — stays visible but tagged
+  async function markUnrelated(threadId) {
+    setThreads(prev => prev.map(t => t.id === threadId ? { ...t, category: "Unrelated" } : t));
+    setSpamToast("Marked as Unrelated.");
+    setTimeout(() => setSpamToast(null), 3000);
+    try {
+      await fetch("/api/flag-not-service", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ threadId, action: "mark" }),
+      });
+    } catch(e) { console.error("Mark unrelated error:", e); }
+  }
+
+  // Fully remove thread — deletes from dashboard, Upstash, and Sheet
   async function flagNotOurService(threadId) {
-    // Remove from dashboard immediately
     setThreads(prev => prev.filter(t => t.id !== threadId));
     setExpandedId(null);
-    setSpamToast("Thread flagged as 'Not our service' and removed.");
+    setSpamToast("Thread removed from dashboard, database, and sheet.");
     setTimeout(() => setSpamToast(null), 4000);
     try {
       await fetch("/api/flag-not-service", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ threadId }),
+        body: JSON.stringify({ threadId, action: "remove" }),
       });
-    } catch(e) { console.error("Flag not-service error:", e); }
+    } catch(e) { console.error("Remove thread error:", e); }
   }
 
   async function addFilterRule() {
@@ -683,6 +718,8 @@ export default function Home() {
         <div className={styles.headerLeft}>
           <span className={styles.headerIcon}>📬</span>
           <span className={styles.headerTitle}>Support Tracker</span>
+          {savedLoading  && <span className={styles.syncPill}>📂 Loading saved threads…</span>}
+          {savedTotal > 0 && !savedLoading && <span style={{fontSize:12,color:"var(--text-secondary)"}}>📂 {savedTotal} saved</span>}
           {analyzing    && <span className={styles.aiPill}>🤖 AI analyzing…</span>}
           {syncing      && <span className={styles.syncPill}>↻ Syncing…</span>}
           {sheetSyncing && <span className={styles.syncPill}>📊 Updating sheet…</span>}
@@ -929,7 +966,7 @@ export default function Home() {
                   {expandedId===r.id&&(
                     <tr key={r.id+"-detail"}>
                       <td colSpan={7} style={{padding:"0 12px 14px",background:"var(--bg-secondary)"}}>
-                        <ThreadDetail r={r} overrides={overrides} savingId={savingId} sheetInfo={sheetInfo} threads={threads} session={session} onOverride={setOverride} onBlock={flagSenderAsSpam} onFlagNotService={flagNotOurService} spamSenders={spamSenders} modelSeries={MODEL_SERIES} allModels={MACHINE_MODELS}/>
+                        <ThreadDetail r={r} overrides={overrides} savingId={savingId} sheetInfo={sheetInfo} threads={threads} session={session} onOverride={setOverride} onBlock={flagSenderAsSpam} onFlagNotService={flagNotOurService} onMarkUnrelated={markUnrelated} spamSenders={spamSenders} modelSeries={MODEL_SERIES} allModels={MACHINE_MODELS}/>
                       </td>
                     </tr>
                   )}

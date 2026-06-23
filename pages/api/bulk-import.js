@@ -95,23 +95,25 @@ async function aiAnalyze(thread) {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return { isSpam: false, category:"Other", summary:"No API key set.", resolution: thread.hasSent?"Reply sent.":"Unresolved.", flags:[], machineModel:null };
 
-  const prompt = `Classify this email for i2R CNC (CNC router manufacturer/seller — does NOT offer cutting/engraving services).
+  const prompt = `Classify this email for i2R CNC (CNC router manufacturer — sells machines only, does NOT offer cutting/engraving/woodworking services).
 
 From: ${thread.customer} ${thread.customerEmail?"<"+thread.customerEmail+">":""}
 Subject: ${thread.subject}
 Content: ${(thread.content||"").slice(0,500)}
 Has our reply: ${thread.hasSent}
 
-Return JSON only:
-- isSpam: true if junk/marketing/automated/cold-outreach/newsletter
-- isNotOurService: true if customer wants cutting/engraving/manufacturing SERVICES (we only sell machines)
-- category: Hardware|Software|Setup|Connectivity|Warranty/Repair|Sales inquiry|Contact request|Other
-- summary: 1-2 sentences what customer needs
-- resolution: 1-2 sentences on resolution, or "Unresolved — no reply sent yet."
-- flags: ["no-reply"] if hasSent=false, ["urgent"] if angry tone
-- machineModel: detected i2R model or null
+Return JSON only — no markdown:
+{
+  "isSpam": true if junk/marketing/automated/newsletter/cold-outreach (not from a real customer),
+  "category": one of: Hardware|Software|Setup|Connectivity|Warranty/Repair|Sales inquiry|Contact request|Unrelated|Other
+    Use "Unrelated" if: customer wants cutting/engraving/woodworking SERVICES, completely off-topic, or not related to CNC machines at all,
+  "summary": "1-2 sentences on what the customer needs",
+  "resolution": "1-2 sentences on how it was resolved, or Unresolved — no reply sent yet.",
+  "flags": array — include no-reply if hasSent=false, urgent if angry/urgent language,
+  "machineModel": "detected i2R model like B.24 or D.22, or null"
+}
 
-{"isSpam":false,"isNotOurService":false,"category":"Hardware","summary":"...","resolution":"...","flags":[],"machineModel":null}`;
+If spam: {"isSpam":true}`;
 
   try {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
@@ -133,11 +135,15 @@ async function getSavedIds() {
 }
 
 async function saveThreads(threads) {
-  if (!threads.length) return;
+  if (!threads.length) return 0;
   const savedIds = await getSavedIds();
-  const newOnes = threads.filter(t => !savedIds.has(t.id));
+  const newOnes = threads.filter(t => t.id && !savedIds.has(t.id));
   if (!newOnes.length) return 0;
-  await Promise.all(newOnes.map(t => kvSet(`thread:${t.id}`, t)));
+  // Save each thread individually
+  for (const t of newOnes) {
+    try { await kvSet(`thread:${t.id}`, t); } catch(e) { console.error("KV save error for", t.id, e.message); }
+  }
+  // Update the ID index
   newOnes.forEach(t => savedIds.add(t.id));
   await kvSet("shared:saved-thread-ids", [...savedIds]);
   return newOnes.length;

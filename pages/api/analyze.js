@@ -24,26 +24,25 @@ async function summarizeThread(thread) {
     return { id: thread.id, isSpam: false, category: "Other", summary: "Set ANTHROPIC_API_KEY in Vercel environment variables to enable AI summaries.", resolution: thread.hasSent ? "Reply sent." : "Unresolved — no reply sent yet.", flags: thread.hasSent ? [] : ["no-reply"], machineModel: null };
   }
 
-  const prompt = `Classify this email for i2R CNC (CNC router manufacturer/seller — does NOT offer cutting or engraving services, only sells machines).
+  const prompt = `Classify this email for i2R CNC (CNC router manufacturer — sells machines only, does NOT offer cutting/engraving/woodworking services).
 
 From: ${thread.customer} ${thread.customerEmail ? "<"+thread.customerEmail+">" : ""}
 Subject: ${thread.subject}
 Content: ${(thread.content || thread.snippet || "").slice(0, 600)}
 Has our reply: ${thread.hasSent}
 
-Reply with JSON only:
+Reply with JSON only — no markdown:
 {
   "isSpam": true if junk/marketing/automated/newsletter/cold-outreach,
-  "isNotOurService": true if customer wants cutting/engraving/manufacturing SERVICES (not buying a machine),
-  "category": "Hardware|Software|Setup|Connectivity|Warranty/Repair|Sales inquiry|Contact request|Other",
+  "category": one of: Hardware|Software|Setup|Connectivity|Warranty/Repair|Sales inquiry|Contact request|Unrelated|Other
+    Use Unrelated if customer wants cutting/engraving/woodworking SERVICES or is completely off-topic,
   "summary": "1-2 sentences what customer needs",
   "resolution": "1-2 sentences on resolution or Unresolved — no reply sent yet.",
-  "flags": ["no-reply"] if hasSent=false, ["urgent"] if angry/urgent,
-  "machineModel": "detected i2R model or null"
+  "flags": array — no-reply if hasSent=false, urgent if angry/frustrated,
+  "machineModel": "i2R model like B.24 or null"
 }
 
-If spam: {"isSpam":true}
-If not our service: {"isSpam":false,"isNotOurService":true}`;
+If spam: {"isSpam":true}`;
 
   try {
     const resp = await fetch(ANTHROPIC_API_URL, {

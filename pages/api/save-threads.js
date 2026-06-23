@@ -49,8 +49,10 @@ export default async function handler(req, res) {
 
     if (!newThreads.length) return res.status(200).json({ saved: 0, skipped: threads.length });
 
-    // 2. Save each thread to Upstash individually
-    await Promise.all(newThreads.map(t => kvSet(`thread:${t.id}`, t)));
+    // 2. Save each thread to Upstash individually (sequential to avoid rate limits)
+    for (const t of newThreads) {
+      try { await kvSet(`thread:${t.id}`, t); } catch(e) { console.error("KV save error:", t.id, e.message); }
+    }
 
     // 3. Update saved ID index
     await addSavedIds(newThreads.map(t => t.id));
