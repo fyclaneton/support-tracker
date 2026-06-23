@@ -1,0 +1,21 @@
+.emptyState { text-align: center; padding: 4rem 2rem; color: var(--text-secondary); }
+
+.entryList { display: flex; flex-direction: column; gap: 10px; }
+
+.entry { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+
+.entryHeader { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; cursor: pointer; }
+.entryHeader:hover { background: var(--bg-secondary); }
+
+.entryTitle { font-size: 14px; font-weight: 500; color: var(--text-primary); margin-bottom: 6px; line-height: 1.4; }
+.entryMeta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.entryBody { padding: 0 16px 16px; border-top: 0.5px solid var(--border); }
+
+.kbSection { margin-top: 14px; }
+.kbLabel { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); margin: 0 0 4px; font-weight: 500; }
+.kbText { font-size: 13px; line-height: 1.7; color: var(--text-primary); margin: 0; white-space: pre-wrap; }
+
+.deleteBtn { background: none; border: 0.5px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; color: var(--text-secondary); }
+.deleteBtn:hover { background: #FEF0EE; color: #993C1D; border-color: #993C1D; }
+.deleteBtn:disabled { opacity: 0.4; cursor: default; }

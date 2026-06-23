@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import styles from "../styles/Home.module.css";
@@ -174,6 +175,31 @@ function CustomerHistoryModal({ customer, threads, onClose }) {
 
 // ── Thread Detail Panel ──
 function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, onFlagNotService, spamSenders, modelSeries, allModels }) {
+  const [draft, setDraft]           = useState(null);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [draftKbUsed, setDraftKbUsed]  = useState(0);
+  const [copied, setCopied]         = useState(false);
+
+  async function generateDraft() {
+    setDraftLoading(true);
+    setDraft(null);
+    try {
+      const res = await fetch("/api/draft-reply", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ thread: r }),
+      });
+      const data = await res.json();
+      setDraft(data.draft || "");
+      setDraftKbUsed(data.kbUsed || 0);
+    } catch(e) { console.error(e); setDraft("Failed to generate draft."); }
+    finally { setDraftLoading(false); }
+  }
+
+  function copyDraft() {
+    navigator.clipboard.writeText(draft || "");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
   const [notes, setNotes] = useState([]);
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
@@ -527,6 +553,25 @@ export default function Home() {
           body: JSON.stringify({ id, updates: { [field]: value, ...extraUpdates } }),
         });
       } catch(e) { console.error("Thread update error:", e); }
+
+      // Auto-add to knowledge base when marking Resolved
+      if (field === "status" && value === "Resolved") {
+        const thread = threads.find(t => t.id === id);
+        if (thread?.summary && thread?.resolution && thread.resolution !== "Unresolved — no reply sent yet.") {
+          fetch("/api/knowledge", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({
+              threadId: id,
+              problem: thread.summary,
+              solution: thread.resolution,
+              category: overrides[id]?.category || thread.category,
+              machineModel: overrides[id]?.machineModel || thread.machineModel,
+              customer: thread.customer,
+              date: thread.date,
+            }),
+          }).catch(e => console.error("KB add error:", e));
+        }
+      }
       if (sheetInfo?.exists) {
         setSheetSyncing(true);
         const thread = threads.find(t=>t.id===id);
@@ -754,6 +799,17 @@ export default function Home() {
         await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field:"status", value: status, ...extraUpdates }) });
         await fetch("/api/update-thread", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, updates: { status, ...extraUpdates } }) });
 
+        // Auto-add to KB if marking Resolved
+        if (status === "Resolved") {
+          const thread = threads.find(t => t.id === id);
+          if (thread?.summary && thread?.resolution && thread.resolution !== "Unresolved — no reply sent yet.") {
+            fetch("/api/knowledge", {
+              method:"POST", headers:{"Content-Type":"application/json"},
+              body: JSON.stringify({ threadId: id, problem: thread.summary, solution: thread.resolution, category: overrides[id]?.category || thread.category, machineModel: overrides[id]?.machineModel || thread.machineModel, customer: thread.customer, date: thread.date }),
+            }).catch(() => {});
+          }
+        }
+
         // Small delay to avoid rate limiting
         await new Promise(r => setTimeout(r, 100));
       }
@@ -875,6 +931,7 @@ export default function Home() {
         </div>
         <div className={styles.headerRight}>
           {spamSenders.length>0 && <button className={styles.spamListBtn} onClick={()=>setShowSpamList(v=>!v)}>🚫 {spamSenders.length} blocked</button>}
+          <a href="/knowledge" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}} title="Knowledge Base">📚 KB</a>
           <button className={styles.spamListBtn} onClick={()=>setShowFilters(v=>!v)}>⚙️ Filters {filterRules.length>0?`(${filterRules.length})`:""}</button>
           {lastSync && <span className={styles.syncTime}>Synced {lastSync.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>}
           <span className={styles.userEmail}>{session.user?.email}</span>
