@@ -342,6 +342,12 @@ export default function Home() {
   const [newRuleValue, setNewRuleValue]   = useState("");
   const [savingRule, setSavingRule]       = useState(false);
   const [customerHistory, setCustomerHistory] = useState(null);
+  const [histPageToken, setHistPageToken]     = useState(null);
+  const [histTotal, setHistTotal]             = useState(null);
+  const [histLoading, setHistLoading]         = useState(false);
+  const [histAnalyzing, setHistAnalyzing]     = useState(false);
+  const [showHistorical, setShowHistorical]   = useState(false);
+  const [historicalIds, setHistoricalIds]     = useState(new Set());
   const syncTimer = useRef(null);
   const PAGE_SIZE = 10;
 
@@ -362,7 +368,27 @@ export default function Home() {
       const data = await res.json();
       const map = {};
       (data.results||[]).forEach(r=>{ map[r.id]=r; });
-      return rawThreads.filter(t=>!map[t.id]?.isSpam).map(t=>({ ...t, ...map[t.id] }));
+
+      // Only keep real support inquiries
+      const passing = rawThreads
+        .filter(t => !map[t.id]?.isSpam)
+        .map(t => ({
+          ...t,
+          ...map[t.id],
+          // AI may also detect machine model — merge with thread-level detection
+          machineModel: map[t.id]?.machineModel || t.machineModel || null,
+        }));
+
+      // Auto-save passing threads to Upstash + Sheet (fire and forget)
+      if (passing.length > 0) {
+        fetch("/api/save-threads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ threads: passing }),
+        }).catch(e => console.error("Auto-save error:", e));
+      }
+
+      return passing;
     } catch(e) { console.error(e); return rawThreads; }
     finally { setAnalyzing(false); }
   }, []);
@@ -426,6 +452,63 @@ export default function Home() {
       if (data.url) setSheetInfo({ exists:true, url:data.url, spreadsheetId:data.spreadsheetId, createdBy: session.user?.email });
     } catch(e) { setSheetError("Failed to create sheet. Make sure Google Sheets & Drive APIs are enabled."); }
     finally { setSheetCreating(false); }
+  }
+
+  async function loadHistorical() {
+    setHistLoading(true);
+    try {
+      const allIds = [...new Set([...threads.map(t => t.id), ...historicalIds])];
+      const res = await fetch("/api/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pageToken: histPageToken, existingIds: allIds }),
+      });
+      const data = await res.json();
+      if (data.error) { console.error(data.error); return; }
+
+      const newThreads = data.threads || [];
+      setHistTotal(data.totalEstimate || null);
+      setHistPageToken(data.nextPageToken || null);
+
+      if (!newThreads.length) return;
+
+      // AI analyze the historical batch
+      setHistAnalyzing(true);
+      try {
+        const analyzeRes = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ threads: newThreads }),
+        });
+        const analyzeData = await analyzeRes.json();
+        const map = {};
+        (analyzeData.results || []).forEach(r => { map[r.id] = r; });
+        const analyzed = newThreads
+          .filter(t => !map[t.id]?.isSpam)
+          .map(t => ({ ...t, ...map[t.id], machineModel: map[t.id]?.machineModel || t.machineModel || null }));
+
+        // Auto-save historical passing threads too
+        if (analyzed.length > 0) {
+          fetch("/api/save-threads", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ threads: analyzed }),
+          }).catch(e => console.error("Historical auto-save error:", e));
+        }
+
+        setThreads(prev => {
+          const existing = new Set(prev.map(t => t.id));
+          const fresh = analyzed.filter(t => !existing.has(t.id));
+          return [...prev, ...fresh];
+        });
+        setHistoricalIds(prev => {
+          const next = new Set(prev);
+          newThreads.forEach(t => next.add(t.id));
+          return next;
+        });
+      } finally { setHistAnalyzing(false); }
+    } catch(e) { console.error("History load error:", e); }
+    finally { setHistLoading(false); }
   }
 
   async function addFilterRule() {
@@ -532,6 +615,7 @@ export default function Home() {
           {syncing      && <span className={styles.syncPill}>↻ Syncing…</span>}
           {sheetSyncing && <span className={styles.syncPill}>📊 Updating sheet…</span>}
           {savingId     && <span className={styles.syncPill}>💾 Saving…</span>}
+          {analyzing    && <span className={styles.syncPill} style={{background:"#E1F5EE",color:"#0F6E56"}}>✓ Auto-saving to sheet</span>}
           {newCount>0   && <button className={styles.newBadge} onClick={()=>{setNewCount(0);setPage(0);}}>{newCount} new thread{newCount>1?"s":""} — click to view</button>}
         </div>
         <div className={styles.headerRight}>
@@ -694,6 +778,24 @@ export default function Home() {
           {nextPageToken&&<button className={styles.btn} onClick={()=>fetchThreads(nextPageToken)} disabled={loading} style={{marginLeft:"auto"}}>{loading?"Loading…":"Load more emails"}</button>}
         </div>
 
+        {/* Historical emails loader */}
+        <div className={styles.histBanner}>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <span style={{fontSize:13}}>📂 <strong>Historical emails</strong> — load resolved &amp; archived threads from the past 2 years</span>
+            {histTotal && <span style={{fontSize:12,color:"var(--text-secondary)"}}>~{histTotal.toLocaleString()} total emails</span>}
+            {historicalIds.size > 0 && <span style={{fontSize:12,color:"#1D9E75"}}>✓ {historicalIds.size} historical threads loaded</span>}
+            {histAnalyzing && <span className={styles.aiPill} style={{fontSize:11}}>🤖 AI analyzing…</span>}
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {!histPageToken && historicalIds.size > 0
+              ? <span style={{fontSize:12,color:"var(--text-secondary)"}}>All historical threads loaded</span>
+              : <button className={styles.btn} onClick={loadHistorical} disabled={histLoading||histAnalyzing}>
+                  {histLoading ? "Loading…" : historicalIds.size === 0 ? "Load historical emails" : "Load more historical"}
+                </button>
+            }
+          </div>
+        </div>
+
         {/* Table */}
         <div className={styles.tableWrap}>
           <table className={styles.table}>
@@ -727,7 +829,10 @@ export default function Home() {
                       {!r.hasSent && r.hoursWaiting>24 && <div style={{marginTop:3}}><TimeChip hours={r.hoursWaiting}/></div>}
                     </td>
                     <td>
-                      <div style={{fontWeight:500,fontSize:13,marginBottom:2}}>{r.subject}</div>
+                      <div style={{fontWeight:500,fontSize:13,marginBottom:2,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                        {r.subject}
+                        {r.isHistorical && <span style={{fontSize:10,background:"var(--bg-secondary)",color:"var(--text-secondary)",padding:"1px 6px",borderRadius:20,fontWeight:400,flexShrink:0}}>archived</span>}
+                      </div>
                       {r.summary
                         ?<div style={{color:"var(--text-secondary)",fontSize:12,lineHeight:1.4}}>🤖 {r.summary}</div>
                         :<div style={{color:"var(--text-secondary)",fontSize:12}}>{r.snippet?.slice(0,100)}…</div>}

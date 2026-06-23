@@ -122,3 +122,5 @@
 .templateGrid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .templateBtn { padding: 6px 14px; font-size: 12px; border: 0.5px solid var(--border); border-radius: 20px; background: var(--bg); color: var(--text-primary); cursor: pointer; white-space: nowrap; transition: background 0.15s; }
 .templateBtn:hover { background: #E6F1FB; border-color: #185FA5; color: #185FA5; }
+
+.histBanner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 10px 14px; background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius); margin-bottom: 1rem; }

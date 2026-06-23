@@ -4,7 +4,7 @@ import { google } from "googleapis";
 import { detectMachineModel } from "../../lib/models";
 import { kvGet } from "../../lib/kv";
 
-// Built-in junk senders/domains — always excluded at Gmail query level
+// Same built-in exclusions as threads.js
 const BUILTIN_EXCLUDES = [
   "quickbooks", "intuit.com",
   "shopify", "myshopify.com", "shopifyemail.com",
@@ -29,14 +29,14 @@ function extractCustomer(messages) {
       if (emailMatch) return emailMatch[1];
     }
   }
-  return "Unknown";
+  return null; // null = no external customer found = skip this thread
 }
 
 function extractCustomerEmail(messages) {
   for (const msg of messages) {
     const headers = msg.payload?.headers || [];
     const from = headers.find(h => h.name === "From")?.value || "";
-    if (from && !from.toLowerCase().includes("i2rcnc") && !from.toLowerCase().includes("noreply") && !from.toLowerCase().includes("no-reply") && !from.toLowerCase().includes("do-not-reply")) {
+    if (from && !from.toLowerCase().includes("i2rcnc") && !from.toLowerCase().includes("noreply") && !from.toLowerCase().includes("no-reply")) {
       const emailMatch = from.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
       if (emailMatch) return emailMatch[0];
     }
@@ -52,19 +52,6 @@ function extractDate(messages) {
   try { return new Date(date).toISOString().split("T")[0]; } catch { return null; }
 }
 
-function extractLastCustomerMessageDate(messages) {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    const headers = msg.payload?.headers || [];
-    const from = headers.find(h => h.name === "From")?.value || "";
-    if (!from.toLowerCase().includes("i2rcnc") && !from.toLowerCase().includes("noreply")) {
-      const date = headers.find(h => h.name === "Date")?.value;
-      if (date) { try { return new Date(date).toISOString(); } catch {} }
-    }
-  }
-  return null;
-}
-
 function extractSubject(messages) {
   const headers = messages[0]?.payload?.headers || [];
   return headers.find(h => h.name === "Subject")?.value || "(no subject)";
@@ -72,9 +59,7 @@ function extractSubject(messages) {
 
 function decodeBase64(data) {
   if (!data) return "";
-  try {
-    return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8");
-  } catch { return ""; }
+  try { return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8"); } catch { return ""; }
 }
 
 function stripHtml(html) {
@@ -83,9 +68,7 @@ function stripHtml(html) {
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 800);
+    .replace(/\s+/g, " ").trim().slice(0, 800);
 }
 
 function extractTextFromPart(part, depth = 0) {
@@ -99,12 +82,8 @@ function extractTextFromPart(part, depth = 0) {
     if (stripped.length > 20) return stripped;
   }
   if (part.parts?.length) {
-    for (const p of part.parts) {
-      if (p.mimeType === "text/plain") { const t = extractTextFromPart(p, depth+1); if (t) return t; }
-    }
-    for (const p of part.parts) {
-      if (p.mimeType === "text/html") { const t = extractTextFromPart(p, depth+1); if (t) return t; }
-    }
+    for (const p of part.parts) { if (p.mimeType === "text/plain") { const t = extractTextFromPart(p, depth+1); if (t) return t; } }
+    for (const p of part.parts) { if (p.mimeType === "text/html") { const t = extractTextFromPart(p, depth+1); if (t) return t; } }
     for (const p of part.parts) { const t = extractTextFromPart(p, depth+1); if (t) return t; }
   }
   return "";
@@ -128,101 +107,107 @@ function buildThreadContent(messages) {
   return parts.filter(Boolean).join(" | ").slice(0, 1200) || "No content available";
 }
 
-function hoursSince(isoDate) {
-  if (!isoDate) return null;
-  return Math.round((Date.now() - new Date(isoDate).getTime()) / (1000 * 60 * 60));
-}
-
-// Client-side filter: check thread against custom rules
-function passesCustomRules(messages, subject, customRules) {
-  if (!customRules?.length) return true;
-  const fromHeader = messages[0]?.payload?.headers?.find(h => h.name === "From")?.value?.toLowerCase() || "";
-  const subjectLower = subject.toLowerCase();
-  const snippet = cleanSnippet(messages[0]?.snippet).toLowerCase();
-
-  for (const rule of customRules) {
-    const v = rule.value.toLowerCase();
-    if (rule.type === "sender" && fromHeader.includes(v)) return false;
-    if (rule.type === "domain" && fromHeader.includes(v)) return false;
-    if (rule.type === "keyword" && (subjectLower.includes(v) || snippet.includes(v))) return false;
-  }
-  return true;
+function deriveStatus(messages) {
+  // If last message is from us → Resolved, otherwise Open
+  const lastMsg = messages[messages.length - 1];
+  const lastFrom = (lastMsg?.payload?.headers?.find(h => h.name === "From")?.value || "").toLowerCase();
+  const labels = messages.flatMap(m => m.labelIds || []);
+  if (lastFrom.includes("i2rcnc") || labels.includes("SENT")) return "Resolved";
+  return "Open";
 }
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
   if (!session) return res.status(401).json({ error: "Unauthorized" });
 
-  const { pageToken, query } = req.query;
+  const { pageToken, existingIds } = req.body || {};
 
   try {
     const oauth2Client = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
     oauth2Client.setCredentials({ access_token: session.accessToken });
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-    // Load custom filter rules from KV
+    // Load custom filter rules
     let customRules = [];
-    try {
-      const raw = await kvGet("shared:filter-rules");
-      customRules = Array.isArray(raw) ? raw : [];
-    } catch {}
+    try { const raw = await kvGet("shared:filter-rules"); customRules = Array.isArray(raw) ? raw : []; } catch {}
 
-    // Keep Gmail query simple — do all filtering server-side to avoid query length limits
-    const searchQuery = query || "in:inbox";
+    // 2-year date cutoff
+    const twoYearsAgo = new Date();
+    twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+    const dateStr = `${twoYearsAgo.getFullYear()}/${String(twoYearsAgo.getMonth()+1).padStart(2,"0")}/${String(twoYearsAgo.getDate()).padStart(2,"0")}`;
 
+    // Search all mail (inbox + sent + archived) from the last 2 years
     const listRes = await gmail.users.threads.list({
       userId: "me",
-      q: searchQuery,
+      q: `in:anywhere -in:spam -in:trash -in:draft after:${dateStr}`,
       maxResults: 20,
       pageToken: pageToken || undefined,
     });
 
     const threads = listRes.data.threads || [];
     const nextPageToken = listRes.data.nextPageToken || null;
+    const totalEstimate = listRes.data.resultCountEstimate || 0;
+
+    // Deduplicate against already-loaded threads
+    const existingSet = new Set(Array.isArray(existingIds) ? existingIds : []);
+    const newThreads = threads.filter(t => !existingSet.has(t.id));
 
     const detailed = await Promise.all(
-      threads.map(async (t) => {
+      newThreads.map(async (t) => {
         try {
           const threadRes = await gmail.users.threads.get({ userId: "me", id: t.id, format: "full" });
           const messages = threadRes.data.messages || [];
+
+          // Skip if no external customer found
+          const customer = extractCustomer(messages);
+          if (!customer) return null;
+
+          // Apply built-in junk filter
+          const fromHeader = messages[0]?.payload?.headers?.find(h => h.name === "From")?.value?.toLowerCase() || "";
+          if (BUILTIN_EXCLUDES.some(ex => fromHeader.includes(ex.toLowerCase()))) return null;
+
+          // Apply custom rules
+          const subject = extractSubject(messages);
+          const subjectLower = subject.toLowerCase();
+          const snippet = cleanSnippet(messages[0]?.snippet).toLowerCase();
+          for (const rule of customRules) {
+            const v = rule.value.toLowerCase();
+            if ((rule.type === "sender" || rule.type === "domain") && fromHeader.includes(v)) return null;
+            if (rule.type === "keyword" && (subjectLower.includes(v) || snippet.includes(v))) return null;
+          }
+
+          const content = buildThreadContent(messages);
+          const status = deriveStatus(messages);
+          const machineModel = detectMachineModel(subject + " " + content);
           const labels = messages.flatMap(m => m.labelIds || []);
           const hasSentReply = labels.includes("SENT");
-          const subject = extractSubject(messages);
-          const content = buildThreadContent(messages);
-          const { } = {};
-          const snippet = cleanSnippet(messages[0]?.snippet);
-          const lastCustomerMsgDate = extractLastCustomerMessageDate(messages);
-          const hoursWaiting = hasSentReply ? null : hoursSince(lastCustomerMsgDate);
-          const machineModel = detectMachineModel(subject + " " + content);
-
-          // Apply all filtering server-side (built-in + custom rules)
-          const fromHeader = messages[0]?.payload?.headers?.find(h => h.name === "From")?.value?.toLowerCase() || "";
-          const isBuiltinJunk = BUILTIN_EXCLUDES.some(ex => fromHeader.includes(ex.toLowerCase()));
-          if (isBuiltinJunk) return null;
-          if (!passesCustomRules(messages, subject, customRules)) return null;
 
           return {
             id: t.id,
             date: extractDate(messages),
-            customer: extractCustomer(messages),
+            customer,
             customerEmail: extractCustomerEmail(messages),
             subject,
-            snippet: snippet || content.slice(0, 200),
+            snippet: cleanSnippet(messages[0]?.snippet) || content.slice(0, 200),
             content,
-            status: hasSentReply ? "Pending" : "Open",
+            status,           // auto-derived: Resolved if last msg is from us
             hasSent: hasSentReply,
             messageCount: messages.length,
-            lastCustomerMsgDate,
-            hoursWaiting,
+            hoursWaiting: null,
             machineModel,
+            isHistorical: true,
           };
         } catch { return null; }
       })
     );
 
-    return res.status(200).json({ threads: detailed.filter(Boolean), nextPageToken });
+    return res.status(200).json({
+      threads: detailed.filter(Boolean),
+      nextPageToken,
+      totalEstimate,
+    });
   } catch (err) {
-    console.error(err);
+    console.error("History API error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
