@@ -84,7 +84,15 @@ function formatModelLabel(model) {
 
 function ModelTag({ model }) {
   if (!model) return null;
-  return <span style={{ fontSize: 11, background: "#E6F1FB", color: "#185FA5", padding: "2px 8px", borderRadius: 20, fontWeight: 500, whiteSpace: "nowrap" }}>🔧 {formatModelLabel(model)}</span>;
+  const label = formatModelLabel(model);
+  return (
+    <span
+      title={label}
+      style={{ fontSize: 11, background: "#E6F1FB", color: "#185FA5", padding: "2px 8px", borderRadius: 20, fontWeight: 500, whiteSpace: "nowrap", display: "inline-block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}
+    >
+      🔧 {label}
+    </span>
+  );
 }
 
 function generatePDF(threads) {
@@ -997,7 +1005,7 @@ export default function Home() {
                 <th style={{width:85}}>Date</th>
                 <th style={{width:130}}>Customer</th>
                 <th>Subject &amp; AI summary</th>
-                <th style={{width:70}}>Model</th>
+                <th style={{width:130}}>Model</th>
                 <th style={{width:110}}>Category</th>
                 <th style={{width:90}}>Status</th>
                 <th style={{width:40,textAlign:"center"}}></th>
