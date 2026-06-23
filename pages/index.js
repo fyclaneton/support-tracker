@@ -1127,7 +1127,7 @@ export default function Home() {
                 <tr><td colSpan={7} style={{textAlign:"center",padding:"2rem",color:"var(--text-secondary)"}}>No threads match your filters.</td></tr>
               ) : pageRows.map(r=>(
                 <>
-                  <tr key={r.id} className={styles.tableRow}>
+                  <tr key={r.id} className={styles.tableRow} onClick={()=>setExpandedId(expandedId===r.id?null:r.id)}>
                     <td style={{textAlign:"center"}} onClick={e=>e.stopPropagation()}>
                       <input
                         type="checkbox"
@@ -1136,8 +1136,8 @@ export default function Home() {
                         style={{cursor:"pointer"}}
                       />
                     </td>
-                    <td style={{color:"var(--text-secondary)",fontSize:12}} onClick={()=>setExpandedId(expandedId===r.id?null:r.id)}>{r.date||"—"}</td>
-                    <td onClick={()=>setExpandedId(expandedId===r.id?null:r.id)}>
+                    <td style={{color:"var(--text-secondary)",fontSize:12}}>{r.date||"—"}</td>
+                    <td>
                       <button className={styles.customerLink} onClick={e=>{e.stopPropagation();setCustomerHistory(r.customer);}} title="View customer history">
                         {r.customer}
                       </button>
