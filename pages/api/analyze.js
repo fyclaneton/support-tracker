@@ -1,94 +1,106 @@
 // POST /api/analyze { threads }
-// Analyzes threads one at a time to avoid Vercel timeout
-// Returns { results: [...] }
+// Uses Anthropic API to classify and summarize threads
+// Each thread analyzed individually for reliability
+
+export const config = { maxDuration: 60 };
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
-async function analyzeOne(thread) {
-  const prompt = `You are a customer support classifier for i2R CNC, a CNC router manufacturer.
+// Hard-code spam detection — no AI needed for obvious junk
+const SPAM_FROM = ["quickbooks","intuit.com","qbo.intuit","shopify","myshopify","shopifyemail","noreply","no-reply","donotreply","do-not-reply","mailer-daemon","hellorep","klaviyo","mailchimp","sendgrid","constantcontact","squarespace","wix.com","paypal","stripe.com","square.com","fedex","ups.com","usps.com","dhl.com","amazon.com","notifications@","newsletter","billing@","invoice@","receipts@","payments@","bounces@","campaigns@","marketing@","promo@"];
+const SPAM_SUBJECT = ["quickbooks sync","connector summary","sync summary","shopify store","your order","order confirmed","order shipped","password reset","verify your email","confirm your email","invoice #","receipt for","payment received","out of office","auto-reply","automatic reply","unsubscribe","% off","free shipping","limited time","special offer","act now"];
 
-Classify this email thread and return a single JSON object.
-
-KEEP (isSpam: false): machine problems, software errors, setup help, warranty/repair, sales inquiries, contact requests from real humans.
-DISCARD (isSpam: true): QuickBooks, Shopify notifications, marketing, newsletters, password resets, shipping notifications, receipts, AI sales tools, auto-replies, cold outreach with no real question.
-
-Thread:
-Subject: ${thread.subject}
-From: ${thread.customer} ${thread.customerEmail ? "<"+thread.customerEmail+">" : ""}
-Date: ${thread.date}
-Messages: ${thread.messageCount}
-Has our reply: ${thread.hasSent}
-Content: ${(thread.content||thread.snippet||"").slice(0,800)}
-
-Return ONLY a JSON object with these fields:
-{
-  "id": "${thread.id}",
-  "isSpam": true or false,
-  "category": one of ["Hardware","Software","Setup","Connectivity","Warranty/Repair","Sales inquiry","Contact request","Other"] (omit if isSpam),
-  "summary": "1-2 sentences describing exactly what the customer needs" (omit if isSpam),
-  "resolution": "1-2 sentences on resolution or 'Unresolved — no reply sent yet.'" (omit if isSpam),
-  "flags": [] array with "no-reply" if no reply, "urgent" if angry/urgent language, "repeat" if mentioned contacting before (omit if isSpam),
-  "machineModel": "detected model like B.24 or D.22" or null (omit if isSpam)
+function isObviousSpam(thread) {
+  const from = (thread.customerEmail || thread.customer || "").toLowerCase();
+  const sub = (thread.subject || "").toLowerCase();
+  if (SPAM_FROM.some(p => from.includes(p))) return true;
+  if (SPAM_SUBJECT.some(p => sub.includes(p))) return true;
+  return false;
 }
 
-No markdown, no backticks. Just the JSON object.`;
-
-  const response = await fetch(ANTHROPIC_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001", // Use Haiku — faster and cheaper for classification
-      max_tokens: 500,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok || data.error) {
-    console.error("Anthropic error for thread", thread.id, ":", JSON.stringify(data.error || data));
-    return { id: thread.id, isSpam: false, category: "Other", summary: "AI analysis failed — check ANTHROPIC_API_KEY in Vercel.", resolution: thread.hasSent ? "Reply sent." : "Unresolved — no reply sent yet.", flags: thread.hasSent ? [] : ["no-reply"], machineModel: null };
+async function summarizeThread(thread) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return { id: thread.id, isSpam: false, category: "Other", summary: "Set ANTHROPIC_API_KEY in Vercel environment variables to enable AI summaries.", resolution: thread.hasSent ? "Reply sent." : "Unresolved — no reply sent yet.", flags: thread.hasSent ? [] : ["no-reply"], machineModel: null };
   }
 
-  const text = data.content?.[0]?.text || "{}";
+  const prompt = `Classify this customer email for i2R CNC (CNC router manufacturer).
+
+From: ${thread.customer} ${thread.customerEmail ? "<"+thread.customerEmail+">" : ""}
+Subject: ${thread.subject}
+Content: ${(thread.content || thread.snippet || "").slice(0, 600)}
+Has our reply: ${thread.hasSent}
+
+Is this a real customer support inquiry (machine issue, software problem, setup help, sales question, warranty/repair, contact request)?
+Or is it junk (marketing, automated notification, newsletter, receipt, cold outreach)?
+
+Reply with JSON only:
+{"isSpam":false,"category":"Hardware","summary":"Customer reports X issue with Y machine","resolution":"We replied with Z fix","flags":[],"machineModel":"B.24"}
+
+category options: Hardware, Software, Setup, Connectivity, Warranty/Repair, Sales inquiry, Contact request, Other
+flags: include "no-reply" if hasSent=false, "urgent" if angry/urgent tone
+machineModel: detected i2R model or null
+
+If junk: {"isSpam":true}`;
+
   try {
-    const parsed = JSON.parse(text);
-    return { ...parsed, id: thread.id };
-  } catch {
-    // Try to extract JSON from text
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) {
-      try { return { ...JSON.parse(match[0]), id: thread.id }; } catch {}
+    const resp = await fetch(ANTHROPIC_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 300,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      console.error(`Anthropic HTTP ${resp.status}:`, err);
+      return { id: thread.id, isSpam: false, category: "Other", summary: `API error ${resp.status} — check logs`, resolution: thread.hasSent ? "Reply sent." : "Unresolved.", flags: thread.hasSent ? [] : ["no-reply"], machineModel: null };
     }
-    return { id: thread.id, isSpam: false, category: "Other", summary: text.slice(0, 200), resolution: "Unresolved.", flags: [], machineModel: null };
+
+    const data = await resp.json();
+    if (data.error) {
+      console.error("Anthropic error:", data.error);
+      return { id: thread.id, isSpam: false, category: "Other", summary: `Anthropic error: ${data.error.message}`, resolution: "Unresolved.", flags: [], machineModel: null };
+    }
+
+    const text = (data.content?.[0]?.text || "{}").trim();
+    let parsed;
+    try { parsed = JSON.parse(text); }
+    catch {
+      const match = text.match(/\{[\s\S]*\}/);
+      parsed = match ? JSON.parse(match[0]) : { isSpam: false };
+    }
+    return { ...parsed, id: thread.id };
+  } catch (err) {
+    console.error("Fetch error:", err.message);
+    return { id: thread.id, isSpam: false, category: "Other", summary: `Network error: ${err.message}`, resolution: "Unresolved.", flags: [], machineModel: null };
   }
 }
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
   const { threads } = req.body;
-  if (!threads?.length) return res.status(400).json({ error: "No threads provided" });
+  if (!threads?.length) return res.status(400).json({ error: "No threads" });
 
-  // Check API key is set
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error("ANTHROPIC_API_KEY is not set in environment variables");
-    const fallback = threads.map(t => ({ id: t.id, isSpam: false, category: "Other", summary: "ANTHROPIC_API_KEY not set in Vercel environment variables.", resolution: t.hasSent ? "Reply sent." : "Unresolved.", flags: t.hasSent ? [] : ["no-reply"], machineModel: null }));
-    return res.status(200).json({ results: fallback });
+  const results = [];
+  for (const thread of threads) {
+    // Skip obvious spam without calling AI
+    if (isObviousSpam(thread)) {
+      results.push({ id: thread.id, isSpam: true });
+      continue;
+    }
+    const result = await summarizeThread(thread);
+    results.push(result);
+    // Small delay between calls to avoid rate limits
+    await new Promise(r => setTimeout(r, 200));
   }
 
-  // Process in parallel batches of 3 (fast but won't hit rate limits)
-  const BATCH_SIZE = 3;
-  const allResults = [];
-
-  for (let i = 0; i < threads.length; i += BATCH_SIZE) {
-    const batch = threads.slice(i, i + BATCH_SIZE);
-    const results = await Promise.all(batch.map(analyzeOne));
-    allResults.push(...results);
-  }
-
-  return res.status(200).json({ results: allResults });
+  return res.status(200).json({ results });
 }
