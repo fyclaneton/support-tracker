@@ -546,8 +546,14 @@ export default function Home() {
             <div className={styles.sheetActive}>
               <span>📊 <strong>Live shared sheet active</strong> — all changes sync automatically.</span>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                <a href={sheetInfo.url} target="_blank" rel="noreferrer" className={styles.sheetsLink}>Open Sheet ↗</a>
+                {sheetInfo.url
+                  ? <a href={sheetInfo.url} target="_blank" rel="noreferrer" className={styles.sheetsLink}>Open Sheet ↗</a>
+                  : <span style={{fontSize:12,color:"#0F6E56"}}>Sheet active (URL not stored — recreate to get link)</span>
+                }
                 <span style={{fontSize:11,color:"var(--text-secondary)"}}>by {sheetInfo.createdBy}</span>
+                <button className={styles.btn} style={{fontSize:11,padding:"3px 8px"}} onClick={createSharedSheet} disabled={sheetCreating}>
+                  {sheetCreating ? "Recreating…" : "↺ Recreate"}
+                </button>
               </div>
             </div>
           ) : (

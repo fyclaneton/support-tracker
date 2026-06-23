@@ -115,8 +115,8 @@ export default async function handler(req, res) {
     oauth2Client.setCredentials({ access_token: session.accessToken });
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-    // Broad query: anything not from ourselves, not newsletters
-    const searchQuery = query || 'in:inbox -from:me -label:sent';
+    // Pull all inbox threads — AI handles spam filtering
+    const searchQuery = query || "in:inbox";
 
     const listRes = await gmail.users.threads.list({
       userId: "me",

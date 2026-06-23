@@ -37,7 +37,11 @@ export default async function handler(req, res) {
     try {
       const stored = await kvGet(SHEET_KEY);
       if (!stored) return res.status(200).json({ exists: false });
-      return res.status(200).json({ exists: true, ...stored });
+      const data = typeof stored === "string" ? JSON.parse(stored) : stored;
+      if (!data?.spreadsheetId) return res.status(200).json({ exists: false });
+      // Ensure URL is always present
+      const url = data.url || `https://docs.google.com/spreadsheets/d/${data.spreadsheetId}`;
+      return res.status(200).json({ exists: true, ...data, url });
     } catch {
       return res.status(200).json({ exists: false });
     }
