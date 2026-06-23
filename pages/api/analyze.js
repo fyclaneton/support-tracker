@@ -24,24 +24,26 @@ async function summarizeThread(thread) {
     return { id: thread.id, isSpam: false, category: "Other", summary: "Set ANTHROPIC_API_KEY in Vercel environment variables to enable AI summaries.", resolution: thread.hasSent ? "Reply sent." : "Unresolved — no reply sent yet.", flags: thread.hasSent ? [] : ["no-reply"], machineModel: null };
   }
 
-  const prompt = `Classify this customer email for i2R CNC (CNC router manufacturer).
+  const prompt = `Classify this email for i2R CNC (CNC router manufacturer/seller — does NOT offer cutting or engraving services, only sells machines).
 
 From: ${thread.customer} ${thread.customerEmail ? "<"+thread.customerEmail+">" : ""}
 Subject: ${thread.subject}
 Content: ${(thread.content || thread.snippet || "").slice(0, 600)}
 Has our reply: ${thread.hasSent}
 
-Is this a real customer support inquiry (machine issue, software problem, setup help, sales question, warranty/repair, contact request)?
-Or is it junk (marketing, automated notification, newsletter, receipt, cold outreach)?
-
 Reply with JSON only:
-{"isSpam":false,"category":"Hardware","summary":"Customer reports X issue with Y machine","resolution":"We replied with Z fix","flags":[],"machineModel":"B.24"}
+{
+  "isSpam": true if junk/marketing/automated/newsletter/cold-outreach,
+  "isNotOurService": true if customer wants cutting/engraving/manufacturing SERVICES (not buying a machine),
+  "category": "Hardware|Software|Setup|Connectivity|Warranty/Repair|Sales inquiry|Contact request|Other",
+  "summary": "1-2 sentences what customer needs",
+  "resolution": "1-2 sentences on resolution or Unresolved — no reply sent yet.",
+  "flags": ["no-reply"] if hasSent=false, ["urgent"] if angry/urgent,
+  "machineModel": "detected i2R model or null"
+}
 
-category options: Hardware, Software, Setup, Connectivity, Warranty/Repair, Sales inquiry, Contact request, Other
-flags: include "no-reply" if hasSent=false, "urgent" if angry/urgent tone
-machineModel: detected i2R model or null
-
-If junk: {"isSpam":true}`;
+If spam: {"isSpam":true}
+If not our service: {"isSpam":false,"isNotOurService":true}`;
 
   try {
     const resp = await fetch(ANTHROPIC_API_URL, {

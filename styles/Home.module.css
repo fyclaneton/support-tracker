@@ -124,3 +124,6 @@
 .templateBtn:hover { background: #E6F1FB; border-color: #185FA5; color: #185FA5; }
 
 .histBanner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 10px 14px; background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius); margin-bottom: 1rem; }
+
+.notServiceBtn { padding: 6px 12px; font-size: 12px; border: 0.5px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
+.notServiceBtn:hover { background: #FAEEDA; color: #854F0B; border-color: #854F0B; }

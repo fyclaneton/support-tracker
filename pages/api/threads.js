@@ -158,8 +158,11 @@ export default async function handler(req, res) {
     let customRules = [];
     try { const raw = await kvGet("shared:filter-rules"); customRules = Array.isArray(raw) ? raw : []; } catch {}
 
-    // Smart Gmail query — use category:primary to get real emails, exclude promotions/updates/social
-    const searchQuery = query || "in:inbox (category:primary OR category:forums) -category:promotions -category:updates -category:social";
+    // Only load last 3 months on regular load — historical data comes from bulk import
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    const dateStr = `${threeMonthsAgo.getFullYear()}/${String(threeMonthsAgo.getMonth()+1).padStart(2,"0")}/${String(threeMonthsAgo.getDate()).padStart(2,"0")}`;
+    const searchQuery = query || `in:inbox (category:primary OR category:forums) -category:promotions -category:updates -category:social after:${dateStr}`;
 
     const listRes = await gmail.users.threads.list({
       userId: "me",

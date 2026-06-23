@@ -154,7 +154,7 @@ function CustomerHistoryModal({ customer, threads, onClose }) {
 }
 
 // ── Thread Detail Panel ──
-function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, spamSenders, modelSeries, allModels }) {
+function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, onFlagNotService, spamSenders, modelSeries, allModels }) {
   const [notes, setNotes] = useState([]);
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
@@ -343,6 +343,9 @@ export default function Home() {
   const [savingRule, setSavingRule]       = useState(false);
   const [customerHistory, setCustomerHistory] = useState(null);
   const [histPageToken, setHistPageToken]     = useState(null);
+  const [bulkRunning, setBulkRunning]         = useState(false);
+  const [bulkProgress, setBulkProgress]       = useState(null); // { loaded, total, saved }
+  const [bulkDone, setBulkDone]               = useState(false);
   const [histTotal, setHistTotal]             = useState(null);
   const [histLoading, setHistLoading]         = useState(false);
   const [histAnalyzing, setHistAnalyzing]     = useState(false);
@@ -516,6 +519,68 @@ export default function Home() {
       } finally { setHistAnalyzing(false); }
     } catch(e) { console.error("History load error:", e); }
     finally { setHistLoading(false); }
+  }
+
+  // Bulk import — runs page by page until done
+  async function startBulkImport(token = null) {
+    setBulkRunning(true);
+    setBulkDone(false);
+    let pageToken = token;
+    let totalLoaded = 0;
+    let totalSaved = 0;
+
+    const run = async () => {
+      try {
+        const res = await fetch("/api/bulk-import", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ pageToken }),
+        });
+        const data = await res.json();
+        if (data.error) { console.error("Bulk import error:", data.error); setBulkRunning(false); return; }
+
+        totalLoaded += data.processed || 0;
+        totalSaved  += data.saved || 0;
+        setBulkProgress({ loaded: totalLoaded, saved: totalSaved, total: data.totalEstimate || 0 });
+
+        // Add threads to dashboard
+        if (data.threads?.length) {
+          setThreads(prev => {
+            const existing = new Set(prev.map(t=>t.id));
+            const fresh = data.threads.filter(t=>!existing.has(t.id));
+            return [...prev, ...fresh];
+          });
+        }
+
+        if (data.nextPageToken) {
+          pageToken = data.nextPageToken;
+          // Small pause between pages to avoid rate limits
+          await new Promise(r => setTimeout(r, 1000));
+          await run();
+        } else {
+          setBulkRunning(false);
+          setBulkDone(true);
+        }
+      } catch(e) {
+        console.error("Bulk import error:", e);
+        setBulkRunning(false);
+      }
+    };
+    await run();
+  }
+
+  // Flag a thread as "not our service" — removes from dashboard, KV, and sheet
+  async function flagNotOurService(threadId) {
+    // Remove from dashboard immediately
+    setThreads(prev => prev.filter(t => t.id !== threadId));
+    setExpandedId(null);
+    setSpamToast("Thread flagged as 'Not our service' and removed.");
+    setTimeout(() => setSpamToast(null), 4000);
+    try {
+      await fetch("/api/flag-not-service", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ threadId }),
+      });
+    } catch(e) { console.error("Flag not-service error:", e); }
   }
 
   async function addFilterRule() {
@@ -785,19 +850,26 @@ export default function Home() {
           {nextPageToken&&<button className={styles.btn} onClick={()=>fetchThreads(nextPageToken)} disabled={loading} style={{marginLeft:"auto"}}>{loading?"Loading…":"Load more emails"}</button>}
         </div>
 
-        {/* Historical emails loader */}
+        {/* Bulk import banner */}
         <div className={styles.histBanner}>
-          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-            <span style={{fontSize:13}}>📂 <strong>Historical emails</strong> — load resolved &amp; archived threads from the past 2 years</span>
-            {histTotal && <span style={{fontSize:12,color:"var(--text-secondary)"}}>~{histTotal.toLocaleString()} total emails</span>}
-            {historicalIds.size > 0 && <span style={{fontSize:12,color:"#1D9E75"}}>✓ {historicalIds.size} historical threads loaded</span>}
-            {histAnalyzing && <span className={styles.aiPill} style={{fontSize:11}}>🤖 AI analyzing…</span>}
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",flex:1}}>
+            <span style={{fontSize:13}}>📂 <strong>Bulk historical import</strong> — loads all emails from past 2 years, filters spam, saves to Upstash + Sheet</span>
+            {bulkProgress && (
+              <span style={{fontSize:12,color:"var(--text-secondary)"}}>
+                {bulkProgress.loaded} processed · {bulkProgress.saved} saved
+                {bulkProgress.total>0 && ` · ~${bulkProgress.total} total`}
+              </span>
+            )}
+            {bulkDone && <span style={{fontSize:12,color:"#1D9E75",fontWeight:500}}>✓ Import complete</span>}
+            {bulkRunning && <span className={styles.aiPill} style={{fontSize:11}}>🤖 Importing &amp; analyzing…</span>}
           </div>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            {!histPageToken && historicalIds.size > 0
-              ? <span style={{fontSize:12,color:"var(--text-secondary)"}}>All historical threads loaded</span>
-              : <button className={styles.btn} onClick={loadHistorical} disabled={histLoading||histAnalyzing}>
-                  {histLoading ? "Loading…" : historicalIds.size === 0 ? "Load historical emails" : "Load more historical"}
+          <div style={{display:"flex",gap:8}}>
+            {bulkRunning
+              ? <button className={styles.btn} onClick={()=>setBulkRunning(false)}>Stop</button>
+              : bulkDone
+              ? <span style={{fontSize:12,color:"var(--text-secondary)"}}>Run again to catch new emails</span>
+              : <button className={styles.btn} onClick={()=>startBulkImport()} disabled={bulkRunning}>
+                  {bulkProgress ? "Resume import" : "Start bulk import"}
                 </button>
             }
           </div>
@@ -857,7 +929,7 @@ export default function Home() {
                   {expandedId===r.id&&(
                     <tr key={r.id+"-detail"}>
                       <td colSpan={7} style={{padding:"0 12px 14px",background:"var(--bg-secondary)"}}>
-                        <ThreadDetail r={r} overrides={overrides} savingId={savingId} sheetInfo={sheetInfo} threads={threads} session={session} onOverride={setOverride} onBlock={flagSenderAsSpam} spamSenders={spamSenders} modelSeries={MODEL_SERIES} allModels={MACHINE_MODELS}/>
+                        <ThreadDetail r={r} overrides={overrides} savingId={savingId} sheetInfo={sheetInfo} threads={threads} session={session} onOverride={setOverride} onBlock={flagSenderAsSpam} onFlagNotService={flagNotOurService} spamSenders={spamSenders} modelSeries={MODEL_SERIES} allModels={MACHINE_MODELS}/>
                       </td>
                     </tr>
                   )}
