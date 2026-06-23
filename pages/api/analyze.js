@@ -1,4 +1,5 @@
 import { isDefiniteJunk } from "../../lib/junk-filter";
+import { normalizeModel } from "../../lib/models";
 
 export const config = { maxDuration: 60 };
 
@@ -37,7 +38,7 @@ Reply with JSON only — no markdown:
   "summary": "1-2 sentences what customer needs",
   "resolution": "1-2 sentences on resolution or Unresolved — no reply sent yet.",
   "flags": array — no-reply if hasSent=false, urgent if angry/frustrated,
-  "machineModel": "i2R model like B.24 or null"
+  "machineModel": "i2R model in series format e.g. B.24 (not i2R 8), D.22, M+350, or null"
 }
 
 If spam: {"isSpam":true}`;
@@ -84,6 +85,8 @@ If spam: {"isSpam":true}`;
       const match = text.match(/\{[\s\S]*\}/);
       parsed = match ? JSON.parse(match[0]) : { isSpam: false };
     }
+    // Always normalize machine model to series format
+    if (parsed.machineModel) parsed.machineModel = normalizeModel(parsed.machineModel);
     return { ...parsed, id: thread.id };
   } catch (err) {
     console.error("Fetch error:", err.message);

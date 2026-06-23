@@ -2,7 +2,7 @@ import { isDefiniteJunk } from "../../lib/junk-filter";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { google } from "googleapis";
-import { detectMachineModel } from "../../lib/models";
+import { detectMachineModel, normalizeModel } from "../../lib/models";
 import { kvGet } from "../../lib/kv";
 
 function extractCustomer(messages) {
@@ -192,7 +192,7 @@ export default async function handler(req, res) {
           const snippet = cleanSnippet(messages[0]?.snippet);
           const lastCustomerMsgDate = extractLastCustomerMessageDate(messages);
           const hoursWaiting = hasSentReply ? null : hoursSince(lastCustomerMsgDate);
-          const machineModel = detectMachineModel(subject + " " + content);
+          const machineModel = normalizeModel(detectMachineModel(subject + " " + content));
 
           return {
             id: t.id,

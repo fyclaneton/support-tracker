@@ -1,4 +1,5 @@
 import { isDefiniteJunk } from "../../lib/junk-filter";
+import { normalizeModel, detectMachineModel } from "../../lib/models";
 // POST /api/bulk-import { action: "start"|"next", pageToken, existingIds }
 // Fetches one page of historical emails, filters, analyzes, saves to KV + Sheet
 // Returns { threads, nextPageToken, totalEstimate, saved, skipped }
@@ -117,7 +118,7 @@ Return JSON only — no markdown:
   "summary": "1-2 sentences on what the customer needs",
   "resolution": "1-2 sentences on how it was resolved, or Unresolved — no reply sent yet.",
   "flags": array — include no-reply if hasSent=false, urgent if angry/urgent language,
-  "machineModel": "detected i2R model like B.24 or D.22, or null"
+  "machineModel": "i2R model in series format e.g. B.24 (not i2R 8), D.22, M+350, or null"
 }
 
 If spam: {"isSpam":true}`;
@@ -237,7 +238,7 @@ export default async function handler(req, res) {
           customerEmail:extractCustomerEmail(messages),
           subject, content, snippet:cleanSnippet(messages[0]?.snippet)||content.slice(0,200),
           status:deriveStatus(messages), hasSent:hasSentReply,
-          messageCount:messages.length, machineModel:detectMachineModel(subject+" "+content),
+          messageCount:messages.length, machineModel:normalizeModel(detectMachineModel(subject+" "+content)),
           isHistorical:true,
         });
       } catch { continue; }

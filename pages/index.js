@@ -71,9 +71,20 @@ function TimeChip({ hours }) {
   return <span style={{ fontSize: 11, color, fontWeight: 600, background: color + "18", padding: "2px 7px", borderRadius: 20, whiteSpace: "nowrap" }}>⏱ {label} waiting</span>;
 }
 
+// MODEL_ALIASES maps display name to alias for B series
+const MODEL_ALIASES = {
+  "B.22": "i2R 4", "B.23": "i2R 6", "B.24": "i2R 8",
+};
+
+function formatModelLabel(model) {
+  if (!model) return null;
+  const alias = MODEL_ALIASES[model];
+  return alias ? `${model} (${alias})` : model;
+}
+
 function ModelTag({ model }) {
   if (!model) return null;
-  return <span style={{ fontSize: 11, background: "#E6F1FB", color: "#185FA5", padding: "2px 8px", borderRadius: 20, fontWeight: 500, whiteSpace: "nowrap" }}>🔧 {model}</span>;
+  return <span style={{ fontSize: 11, background: "#E6F1FB", color: "#185FA5", padding: "2px 8px", borderRadius: 20, fontWeight: 500, whiteSpace: "nowrap" }}>🔧 {formatModelLabel(model)}</span>;
 }
 
 function generatePDF(threads) {
@@ -346,6 +357,7 @@ export default function Home() {
   const [bulkRunning, setBulkRunning]         = useState(false);
   const [bulkProgress, setBulkProgress]       = useState(null); // { loaded, total, saved }
   const [bulkDone, setBulkDone]               = useState(false);
+  const [migrationDone, setMigrationDone]     = useState(false);
   const [savedLoading, setSavedLoading]       = useState(false);
   const [savedTotal, setSavedTotal]           = useState(0);
   const [histTotal, setHistTotal]             = useState(null);
@@ -370,6 +382,8 @@ export default function Home() {
       .then(r=>r.json()).then(d=>setSheetInfo(d)).catch(console.error);
     fetch("/api/spam-senders").then(r=>r.json()).then(d=>{ if(d.senders) setSpamSenders(Array.isArray(d.senders)?d.senders:[]); }).catch(console.error);
     fetch("/api/filter-rules").then(r=>r.json()).then(d=>{ if(d.rules) setFilterRules(Array.isArray(d.rules)?d.rules:[]); }).catch(console.error);
+    // Check if model migration has already been run
+    fetch("/api/check-migration").then(r=>r.json()).then(d=>{ if(d.done) setMigrationDone(true); }).catch(console.error);
   }, [session]);
 
   const analyzeThreads = useCallback(async (rawThreads) => {
@@ -382,13 +396,20 @@ export default function Home() {
       (data.results||[]).forEach(r=>{ map[r.id]=r; });
 
       // Only keep real support inquiries
+      const MODEL_NORM = {
+        "i2r-4":"B.22","i2r 4":"B.22","i2r4":"B.22","i2R-4":"B.22","i2R 4":"B.22","i2R4":"B.22",
+        "i2r-6":"B.23","i2r 6":"B.23","i2r6":"B.23","i2R-6":"B.23","i2R 6":"B.23","i2R6":"B.23",
+        "i2r-8":"B.24","i2r 8":"B.24","i2r8":"B.24","i2R-8":"B.24","i2R 8":"B.24","i2R8":"B.24",
+        "i2R8S":"B.24","i2R 8S":"B.24","i2R-8S":"B.24","B24":"B.24","b24":"B.24","b22":"B.22","b23":"B.23",
+      };
+      const normalizeM = m => m ? (MODEL_NORM[m] || MODEL_NORM[m.toLowerCase()] || m) : null;
+
       const passing = rawThreads
         .filter(t => !map[t.id]?.isSpam)
         .map(t => ({
           ...t,
           ...map[t.id],
-          // AI may also detect machine model — merge with thread-level detection
-          machineModel: map[t.id]?.machineModel || t.machineModel || null,
+          machineModel: normalizeM(map[t.id]?.machineModel || t.machineModel || null),
         }));
 
       // Auto-save passing threads to Upstash + Sheet (fire and forget)
@@ -616,6 +637,34 @@ export default function Home() {
         body: JSON.stringify({ threadId, action: "remove" }),
       });
     } catch(e) { console.error("Remove thread error:", e); }
+  }
+
+  async function migrateModels() {
+    setSpamToast("Migrating model tags…");
+    try {
+      const res = await fetch("/api/migrate-models", { method: "POST" });
+      const data = await res.json();
+      if (data.ok) {
+        // Update local thread state with new model tags
+        setThreads(prev => prev.map(t => {
+          const migrations = {
+            "i2R-4":"B.22","i2r-4":"B.22","i2R 4":"B.22","i2r4":"B.22","i2R4":"B.22",
+            "i2R-6":"B.23","i2r-6":"B.23","i2R 6":"B.23","i2r6":"B.23","i2R6":"B.23",
+            "i2R-8":"B.24","i2r-8":"B.24","i2R 8":"B.24","i2r8":"B.24","i2R8":"B.24",
+            "i2R8S":"B.24","i2R 8S":"B.24","i2R-8S":"B.24","B24":"B.24","b24":"B.24",
+          };
+          const newModel = migrations[t.machineModel];
+          return newModel ? { ...t, machineModel: newModel } : t;
+        }));
+        setSpamToast(`✓ Updated ${data.updated} thread model tags.`);
+        setTimeout(() => setSpamToast(null), 4000);
+        setMigrationDone(true);
+      }
+    } catch(e) {
+      console.error(e);
+      setSpamToast("Migration failed — check console.");
+      setTimeout(() => setSpamToast(null), 4000);
+    }
   }
 
   async function clearSavedData() {
@@ -878,7 +927,7 @@ export default function Home() {
               const seriesModels = MACHINE_MODELS.filter(m => m.startsWith(series + ".") || m.startsWith(series + "+"));
               return seriesModels.length > 0 ? (
                 <optgroup key={series} label={`${series} Series`}>
-                  {seriesModels.map(m => <option key={m} value={m}>{m}</option>)}
+                  {seriesModels.map(m => <option key={m} value={m}>{formatModelLabel(m)}</option>)}
                 </optgroup>
               ) : null;
             })}
@@ -924,9 +973,16 @@ export default function Home() {
                     {bulkProgress ? "Resume import" : "Start bulk import"}
                   </button>
                   {savedTotal > 0 && (
-                    <button className={styles.btn} style={{color:"#993C1D",borderColor:"#993C1D"}} onClick={clearSavedData}>
-                      🗑 Clear &amp; re-import
-                    </button>
+                    <>
+                      {!migrationDone && (
+                        <button className={styles.btn} onClick={migrateModels} title="Fix old i2R 4/6/8 tags to B.22/B.23/B.24">
+                          🔧 Fix model tags
+                        </button>
+                      )}
+                      <button className={styles.btn} style={{color:"#993C1D",borderColor:"#993C1D"}} onClick={clearSavedData}>
+                        🗑 Clear &amp; re-import
+                      </button>
+                    </>
                   )}
                 </>
             }

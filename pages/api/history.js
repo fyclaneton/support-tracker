@@ -2,7 +2,7 @@ import { isDefiniteJunk } from "../../lib/junk-filter";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { google } from "googleapis";
-import { detectMachineModel } from "../../lib/models";
+import { detectMachineModel, normalizeModel } from "../../lib/models";
 import { kvGet } from "../../lib/kv";
 
 function extractCustomer(messages) {
