@@ -391,7 +391,10 @@ export default function Home() {
   const [bulkRunning, setBulkRunning]         = useState(false);
   const [bulkProgress, setBulkProgress]       = useState(null); // { loaded, total, saved }
   const [bulkDone, setBulkDone]               = useState(false);
+  const [importPageToken, setImportPageToken] = useState(null); // persisted across sessions
   const [migrationDone, setMigrationDone]     = useState(false);
+  const [isNewAccount, setIsNewAccount]       = useState(false);
+  const [newAccountBanner, setNewAccountBanner] = useState(false);
   const [selectedIds, setSelectedIds]         = useState(new Set());
   const [bulkUpdating, setBulkUpdating]       = useState(false);
   const [savedLoading, setSavedLoading]       = useState(false);
@@ -420,6 +423,25 @@ export default function Home() {
     fetch("/api/filter-rules").then(r=>r.json()).then(d=>{ if(d.rules) setFilterRules(Array.isArray(d.rules)?d.rules:[]); }).catch(console.error);
     // Check if model migration has already been run
     fetch("/api/check-migration").then(r=>r.json()).then(d=>{ if(d.done) setMigrationDone(true); }).catch(console.error);
+
+    // Load saved import progress for this account
+    fetch("/api/import-progress").then(r=>r.json()).then(d=>{
+      if (d.progress?.pageToken) {
+        setImportPageToken(d.progress.pageToken);
+        setBulkProgress({ loaded: d.progress.processed || 0, saved: d.progress.saved || 0, total: d.progress.total || 0 });
+      }
+    }).catch(console.error);
+
+    // Check if this Google account has been seen before
+    fetch("/api/account-seen").then(r=>r.json()).then(d=>{
+      if (!d.seen) {
+        // First time this account has signed in — show banner
+        setIsNewAccount(true);
+        setNewAccountBanner(true);
+        // Mark as seen
+        fetch("/api/account-seen", { method:"POST" }).catch(console.error);
+      }
+    }).catch(console.error);
   }, [session]);
 
   const analyzeThreads = useCallback(async (rawThreads) => {
@@ -652,15 +674,17 @@ export default function Home() {
     finally { setHistLoading(false); }
   }
 
-  // Bulk import — runs page by page until done
+  // Bulk import — runs page by page, saves progress to Upstash after each batch
   async function startBulkImport(token = null) {
     setBulkRunning(true);
     setBulkDone(false);
-    let pageToken = token;
-    let totalLoaded = 0;
-    let totalSaved = 0;
+    // Use passed token, or saved importPageToken, or start fresh
+    let pageToken = token ?? importPageToken ?? null;
+    let totalLoaded = bulkProgress?.loaded || 0;
+    let totalSaved  = bulkProgress?.saved  || 0;
 
     const run = async () => {
+      if (!bulkRunning) return; // Stopped by user
       try {
         const res = await fetch("/api/bulk-import", {
           method:"POST", headers:{"Content-Type":"application/json"},
@@ -671,9 +695,10 @@ export default function Home() {
 
         totalLoaded += data.processed || 0;
         totalSaved  += data.saved || 0;
-        setBulkProgress({ loaded: totalLoaded, saved: totalSaved, total: data.totalEstimate || 0 });
+        const total = data.totalEstimate || bulkProgress?.total || 0;
+        setBulkProgress({ loaded: totalLoaded, saved: totalSaved, total });
 
-        // Add threads to dashboard
+        // Add new threads to dashboard
         if (data.threads?.length) {
           setThreads(prev => {
             const existing = new Set(prev.map(t=>t.id));
@@ -684,15 +709,31 @@ export default function Home() {
 
         if (data.nextPageToken) {
           pageToken = data.nextPageToken;
-          // Small pause between pages to avoid rate limits
+          setImportPageToken(pageToken);
+          // Save progress to Upstash so we can resume after refresh
+          fetch("/api/import-progress", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ pageToken, processed: totalLoaded, saved: totalSaved, total }),
+          }).catch(console.error);
+          // Small pause between pages
           await new Promise(r => setTimeout(r, 1000));
           await run();
         } else {
+          // Import complete — clear saved progress
+          setImportPageToken(null);
+          fetch("/api/import-progress", { method:"DELETE" }).catch(console.error);
           setBulkRunning(false);
           setBulkDone(true);
         }
       } catch(e) {
         console.error("Bulk import error:", e);
+        // Save progress so user can resume
+        if (pageToken) {
+          fetch("/api/import-progress", {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ pageToken, processed: totalLoaded, saved: totalSaved, total: bulkProgress?.total || 0 }),
+          }).catch(console.error);
+        }
         setBulkRunning(false);
       }
     };
@@ -1031,6 +1072,20 @@ export default function Home() {
           )}
         </div>
 
+        {/* New account banner */}
+        {newAccountBanner && (
+          <div className={styles.newAccountBanner}>
+            <div>
+              <p style={{fontSize:13,fontWeight:500,margin:"0 0 3px"}}>👋 Welcome! This is your first time signing in with {session.user?.email}</p>
+              <p style={{fontSize:12,color:"var(--text-secondary)",margin:0}}>
+                Your current inbox is loading automatically. To also import your past 2 years of emails, click Bulk Import below.
+                All existing team data is already visible above.
+              </p>
+            </div>
+            <button className={styles.btn} onClick={()=>setNewAccountBanner(false)} style={{flexShrink:0}}>Dismiss</button>
+          </div>
+        )}
+
         {/* Stats */}
         <div className={styles.statGrid}>
           <div className={styles.statCard}><p className={styles.statLabel}>Total threads</p><p className={styles.statValue}>{allRows.length}</p></div>
@@ -1103,27 +1158,35 @@ export default function Home() {
             {bulkDone && <span style={{fontSize:12,color:"#1D9E75",fontWeight:500}}>✓ Import complete</span>}
             {bulkRunning && <span className={styles.aiPill} style={{fontSize:11}}>🤖 Importing &amp; analyzing…</span>}
           </div>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
             {bulkRunning
-              ? <button className={styles.btn} onClick={()=>setBulkRunning(false)}>Stop</button>
-              : <>
-                  <button className={styles.btn} onClick={()=>startBulkImport()} disabled={bulkRunning}>
-                    {bulkProgress ? "Resume import" : "Start bulk import"}
+              ? <button className={styles.btn} onClick={()=>{ setBulkRunning(false); }}>⏸ Pause</button>
+              : bulkDone
+              ? <span style={{fontSize:12,color:"#1D9E75",fontWeight:500}}>✓ Import complete</span>
+              : importPageToken
+              ? (
+                  <button className={styles.btn} style={{background:"#E1F5EE",color:"#0F6E56",borderColor:"#0F6E56"}} onClick={()=>startBulkImport()}>
+                    ▶ Resume import
                   </button>
-                  {savedTotal > 0 && (
-                    <>
-                      {!migrationDone && (
-                        <button className={styles.btn} onClick={migrateModels} title="Fix old i2R 4/6/8 tags to B.22/B.23/B.24">
-                          🔧 Fix model tags
-                        </button>
-                      )}
-                      <button className={styles.btn} style={{color:"#993C1D",borderColor:"#993C1D"}} onClick={clearSavedData}>
-                        🗑 Clear &amp; re-import
-                      </button>
-                    </>
-                  )}
-                </>
+                )
+              : (
+                  <button className={styles.btn} onClick={()=>startBulkImport()}>
+                    Start bulk import
+                  </button>
+                )
             }
+            {!bulkRunning && savedTotal > 0 && (
+              <>
+                {!migrationDone && (
+                  <button className={styles.btn} onClick={migrateModels} title="Fix old i2R 4/6/8 tags to B.22/B.23/B.24">
+                    🔧 Fix model tags
+                  </button>
+                )}
+                <button className={styles.btn} style={{color:"#993C1D",borderColor:"#993C1D"}} onClick={clearSavedData}>
+                  🗑 Clear &amp; re-import
+                </button>
+              </>
+            )}
           </div>
         </div>
 

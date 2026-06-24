@@ -129,3 +129,5 @@
 .notServiceBtn:hover { background: #FAEEDA; color: #854F0B; border-color: #854F0B; }
 
 .bulkBar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; background: #E6F1FB; border: 0.5px solid #185FA5; border-radius: var(--radius); margin-bottom: 8px; }
+
+.newAccountBanner { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 16px; background: #F0FAF5; border: 0.5px solid #1D9E75; border-radius: var(--radius); margin-bottom: 1.5rem; }
