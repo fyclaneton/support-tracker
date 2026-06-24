@@ -470,13 +470,15 @@ export default function Home() {
           machineModel: normalizeM(map[t.id]?.machineModel || t.machineModel || null),
         }));
 
-      // Auto-save passing threads to Upstash + Sheet (fire and forget)
+      // Auto-save passing threads to Upstash + Sheet (awaited so reload sees them)
       if (passing.length > 0) {
-        fetch("/api/save-threads", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ threads: passing }),
-        }).catch(e => console.error("Auto-save error:", e));
+        try {
+          await fetch("/api/save-threads", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ threads: passing }),
+          });
+        } catch(e) { console.error("Auto-save error:", e); }
       }
 
       return passing;
@@ -515,21 +517,37 @@ export default function Home() {
 
   useEffect(() => {
     if (!session || session.error) return;
-    // 1. Load saved threads from Upstash first (instant, persistent)
-    setSavedLoading(true);
-    fetch("/api/saved-threads")
-      .then(r => r.json())
-      .then(data => {
+
+    const init = async () => {
+      // 1. Load saved threads from Upstash immediately (full history, instant)
+      setSavedLoading(true);
+      try {
+        const r = await fetch("/api/saved-threads");
+        const data = await r.json();
         if (data.threads?.length) {
-          // Saved threads already have updates baked in from update-thread API
           setThreads(data.threads);
           setSavedTotal(data.total || 0);
         }
-        // 2. Then fetch fresh emails from last 3 months, merge in new ones
-        fetchThreads(null, false);
-      })
-      .catch(() => fetchThreads(null, false))
-      .finally(() => setSavedLoading(false));
+      } catch(e) { console.error("Load saved error:", e); }
+      finally { setSavedLoading(false); }
+
+      // 2. Fetch last 3 months from current signed-in account's Gmail
+      //    analyzeThreads inside fetchThreads auto-saves new threads to Upstash + Sheet
+      await fetchThreads(null, false);
+
+      // 3. Reload from Upstash again to show any newly saved threads
+      //    This ensures threads from this account appear even if they weren't saved before
+      try {
+        const r2 = await fetch("/api/saved-threads");
+        const data2 = await r2.json();
+        if (data2.threads?.length) {
+          setThreads(data2.threads);
+          setSavedTotal(data2.total || 0);
+        }
+      } catch(e) { console.error("Reload after fetch error:", e); }
+    };
+
+    init();
   }, [session]);
   useEffect(() => {
     if (!session) return;
@@ -1183,7 +1201,7 @@ export default function Home() {
         {/* Bulk import banner */}
         <div className={styles.histBanner}>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",flex:1}}>
-            <span style={{fontSize:13}}>📂 <strong>Bulk historical import</strong> — loads all emails from past 2 years, filters spam, saves to database</span>
+            <span style={{fontSize:13}}>📂 <strong>Bulk historical import</strong> — importing from <strong>{session.user?.email}</strong></span>
             {bulkProgress && !bulkDone && (
               <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
                 <span style={{fontSize:12,color:"var(--text-secondary)"}}>
