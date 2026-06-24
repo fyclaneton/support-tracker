@@ -149,14 +149,32 @@ export default async function handler(req, res) {
     const threeMonthsAgo = new Date();
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
     const dateStr = `${threeMonthsAgo.getFullYear()}/${String(threeMonthsAgo.getMonth()+1).padStart(2,"0")}/${String(threeMonthsAgo.getDate()).padStart(2,"0")}`;
-    const searchQuery = query || `in:inbox (category:primary OR category:forums) -category:promotions -category:updates -category:social after:${dateStr}`;
+    // Use category filter if available (works on accounts with tabbed inbox like i2rcnc)
+    // Fall back to plain inbox query if category returns nothing (for accounts without tabs)
+    // Junk filtering is also done server-side as a second layer
+    const primaryQuery = `in:inbox (category:primary OR category:forums) -category:promotions -category:updates -category:social after:${dateStr}`;
+    const fallbackQuery = `in:inbox after:${dateStr}`;
 
-    const listRes = await gmail.users.threads.list({
+    // Try primary query first
+    let searchQuery = query || primaryQuery;
+
+    let listRes = await gmail.users.threads.list({
       userId: "me",
       q: searchQuery,
       maxResults: 20,
       pageToken: pageToken || undefined,
     });
+
+    // If category filter returns nothing, fall back to plain inbox query
+    if (!query && !pageToken && (!listRes.data.threads || listRes.data.threads.length === 0)) {
+      searchQuery = fallbackQuery;
+      listRes = await gmail.users.threads.list({
+        userId: "me",
+        q: searchQuery,
+        maxResults: 20,
+        pageToken: undefined,
+      });
+    }
 
     const threads = listRes.data.threads || [];
     const nextPageToken = listRes.data.nextPageToken || null;

@@ -107,7 +107,7 @@ export default async function handler(req, res) {
     // Use Gmail category filter for history too
     const listRes = await gmail.users.threads.list({
       userId: "me",
-      q: `in:anywhere -in:spam -in:trash -in:draft (category:primary OR category:forums) -category:promotions -category:updates -category:social after:${dateStr}`,
+      q: `in:anywhere -in:spam -in:trash -in:draft after:${dateStr}`,
       maxResults: 20,
       pageToken: pageToken || undefined,
     });

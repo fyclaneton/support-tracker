@@ -177,13 +177,27 @@ export default async function handler(req, res) {
     const savedIds = await getSavedIds();
 
     // List threads — use metadata format first (fast) to pre-filter
-    const listRes = await gmail.users.threads.list({
+    // Try with category filter first (cleaner for tabbed inbox accounts)
+    const categoryQuery = `in:anywhere -in:spam -in:trash -in:draft (category:primary OR category:forums) -category:promotions -category:updates -category:social after:${dateStr}`;
+    const plainQuery = `in:anywhere -in:spam -in:trash -in:draft after:${dateStr}`;
+
+    let listRes = await gmail.users.threads.list({
       userId: "me",
-      q: `in:anywhere -in:spam -in:trash -in:draft (category:primary OR category:forums) -category:promotions -category:updates -category:social after:${dateStr}`,
+      q: pageToken ? plainQuery : categoryQuery,
       maxResults: 15,
       pageToken: pageToken || undefined,
       fields: "threads/id,nextPageToken,resultCountEstimate",
     });
+
+    // Fall back to plain query if category returns nothing (account without tabbed inbox)
+    if (!pageToken && (!listRes.data.threads || listRes.data.threads.length === 0)) {
+      listRes = await gmail.users.threads.list({
+        userId: "me",
+        q: plainQuery,
+        maxResults: 15,
+        fields: "threads/id,nextPageToken,resultCountEstimate",
+      });
+    }
 
     const threads = listRes.data.threads || [];
     const nextPageToken = listRes.data.nextPageToken || null;

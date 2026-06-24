@@ -20,7 +20,7 @@ export default async function handler(req, res) {
     const threeMonthsAgo = new Date();
     threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
     const dateStr = `${threeMonthsAgo.getFullYear()}/${String(threeMonthsAgo.getMonth()+1).padStart(2,"0")}/${String(threeMonthsAgo.getDate()).padStart(2,"0")}`;
-    const query = `in:inbox (category:primary OR category:forums) -category:promotions -category:updates -category:social after:${dateStr}`;
+    const query = `in:inbox after:${dateStr}`;
 
     const listRes = await gmail.users.threads.list({
       userId: "me", q: query, maxResults: 5,
