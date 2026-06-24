@@ -3,7 +3,7 @@ import { useSession, signIn, signOut } from "next-auth/react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import styles from "../styles/Home.module.css";
 
-const CATEGORIES = ["Software", "Hardware", "Setup", "Connectivity", "Warranty/Repair", "Sales inquiry", "Contact request", "Unrelated", "Other"];
+const CATEGORIES = ["Software", "Hardware", "Setup", "Connectivity", "Warranty/Repair", "Sales inquiry", "Contact request", "Distributor", "Unrelated", "Other"];
 const STATUSES = ["Open", "Pending", "Resolved"];
 // Full i2R model list
 const MACHINE_MODELS = [
@@ -356,6 +356,51 @@ function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onO
   );
 }
 
+function DistributorModal({ thread, onSave, onClose }) {
+  const [company, setCompany] = useState("");
+  const [name, setName]       = useState(thread?.customer || "");
+  const [email, setEmail]     = useState(thread?.customerEmail || "");
+
+  function handleSave() {
+    if (!email.trim()) return;
+    onSave(email.trim(), name.trim() || email.trim(), company.trim());
+  }
+
+  return (
+    <div className={styles.modalBackdrop} onClick={onClose}>
+      <div className={styles.modal} style={{maxWidth:420}} onClick={e=>e.stopPropagation()}>
+        <div className={styles.modalHeader}>
+          <div>
+            <h2 className={styles.modalTitle}>🏢 Flag as Distributor</h2>
+            <p style={{fontSize:12,color:"var(--text-secondary)",margin:"2px 0 0"}}>Future emails from this sender will be tagged as Distributor</p>
+          </div>
+          <button onClick={onClose} className={styles.modalClose}>×</button>
+        </div>
+        <div className={styles.modalBody} style={{display:"flex",flexDirection:"column",gap:12}}>
+          <div>
+            <p className={styles.detailLabel} style={{marginBottom:4}}>Contact name</p>
+            <input className={styles.searchInput} value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Steve Stevenson" style={{width:"100%"}}/>
+          </div>
+          <div>
+            <p className={styles.detailLabel} style={{marginBottom:4}}>Email address</p>
+            <input className={styles.searchInput} value={email} onChange={e=>setEmail(e.target.value)} placeholder="e.g. steve@simplytechnologies.xyz" style={{width:"100%"}}/>
+          </div>
+          <div>
+            <p className={styles.detailLabel} style={{marginBottom:4}}>Company name</p>
+            <input className={styles.searchInput} value={company} onChange={e=>setCompany(e.target.value)} placeholder="e.g. Simply Technologies" style={{width:"100%"}}/>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4}}>
+            <button className={styles.btn} onClick={onClose}>Cancel</button>
+            <button className={styles.btn} style={{background:"#FEF3E2",color:"#935A00",borderColor:"#935A00"}} onClick={handleSave} disabled={!email.trim()}>
+              🏢 Save distributor
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const { data: session, status } = useSession();
   const [threads, setThreads]             = useState([]);
@@ -394,6 +439,9 @@ export default function Home() {
   const [importPageToken, setImportPageToken] = useState(null); // persisted across sessions
   const [migrationDone, setMigrationDone]     = useState(false);
   const [isNewAccount, setIsNewAccount]       = useState(false);
+  const [distributors, setDistributors]       = useState([]);
+  const [showDistModal, setShowDistModal]     = useState(false);
+  const [distThread, setDistThread]           = useState(null); // thread being flagged
   const [newAccountBanner, setNewAccountBanner] = useState(false);
   const [selectedIds, setSelectedIds]         = useState(new Set());
   const [bulkUpdating, setBulkUpdating]       = useState(false);
@@ -420,6 +468,7 @@ export default function Home() {
     fetch("/api/sheet-sync", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ action:"info" }) })
       .then(r=>r.json()).then(d=>setSheetInfo(d)).catch(console.error);
     fetch("/api/spam-senders").then(r=>r.json()).then(d=>{ if(d.senders) setSpamSenders(Array.isArray(d.senders)?d.senders:[]); }).catch(console.error);
+    fetch("/api/distributors").then(r=>r.json()).then(d=>{ if(d.distributors) setDistributors(Array.isArray(d.distributors)?d.distributors:[]); }).catch(console.error);
     fetch("/api/filter-rules").then(r=>r.json()).then(d=>{ if(d.rules) setFilterRules(Array.isArray(d.rules)?d.rules:[]); }).catch(console.error);
     // Check if model migration has already been run
     fetch("/api/check-migration").then(r=>r.json()).then(d=>{ if(d.done) setMigrationDone(true); }).catch(console.error);
@@ -911,6 +960,44 @@ export default function Home() {
     finally { setBulkUpdating(false); }
   }
 
+  // Tag distributor — opens modal to enter company name
+  function openDistributorModal(thread) {
+    setDistThread(thread);
+    setShowDistModal(true);
+  }
+
+  async function saveDistributor(email, name, company) {
+    try {
+      const res = await fetch("/api/distributors", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, name, company }),
+      });
+      const data = await res.json();
+      if (data.distributors) setDistributors(data.distributors);
+      // Also mark all their current threads as Distributor category
+      setThreads(prev => prev.map(t =>
+        (t.customerEmail === email || t.customer === name)
+          ? { ...t, category: "Distributor" }
+          : t
+      ));
+      setSpamToast(`✓ ${name} (${company}) added as distributor — their threads are tagged.`);
+      setTimeout(() => setSpamToast(null), 4000);
+    } catch(e) { console.error(e); }
+    setShowDistModal(false);
+    setDistThread(null);
+  }
+
+  async function removeDistributor(email) {
+    try {
+      const res = await fetch("/api/distributors", {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (data.distributors) setDistributors(data.distributors);
+    } catch(e) { console.error(e); }
+  }
+
   async function addFilterRule() {
     if (!newRuleValue.trim()) return;
     setSavingRule(true);
@@ -960,14 +1047,22 @@ export default function Home() {
     } catch(e) { console.error("Unblock sender failed:", e); }
   }
 
+  // Build distributor lookup map: email -> distributor entry
+  const distMap = {};
+  distributors.forEach(d => { distMap[d.email.toLowerCase()] = d; });
+
   const allRows = threads
     .filter(t=>!Array.isArray(spamSenders)||!spamSenders.includes(t.customer))
-    .map(t=>({
-      ...t,
-      status:       overrides[t.id]?.status       || t.status,
-      category:     overrides[t.id]?.category     || t.category,
-      machineModel: overrides[t.id]?.machineModel !== undefined ? overrides[t.id]?.machineModel : t.machineModel,
-    }));
+    .map(t=>{
+      const distEntry = t.customerEmail ? distMap[t.customerEmail.toLowerCase()] : null;
+      return {
+        ...t,
+        status:       overrides[t.id]?.status       || t.status,
+        category:     overrides[t.id]?.category     || (distEntry ? "Distributor" : t.category),
+        machineModel: overrides[t.id]?.machineModel !== undefined ? overrides[t.id]?.machineModel : t.machineModel,
+        distributorCompany: distEntry?.company || null,
+      };
+    });
 
   const filtered = allRows.filter(r=>{
     const q = search.toLowerCase();
@@ -1006,6 +1101,7 @@ export default function Home() {
     <div className={styles.wrap}>
       {spamToast && <div className={styles.toast}>{spamToast}</div>}
       {customerHistory && <CustomerHistoryModal customer={customerHistory} threads={allRows} onClose={()=>setCustomerHistory(null)} />}
+      {showDistModal && distThread && <DistributorModal thread={distThread} onSave={saveDistributor} onClose={()=>{setShowDistModal(false);setDistThread(null);}} />}
 
       <header className={styles.header}>
         <div className={styles.headerLeft}>
@@ -1022,6 +1118,7 @@ export default function Home() {
         </div>
         <div className={styles.headerRight}>
           {spamSenders.length>0 && <button className={styles.spamListBtn} onClick={()=>setShowSpamList(v=>!v)}>🚫 {spamSenders.length} blocked</button>}
+          {distributors.length>0 && <span style={{fontSize:12,color:"#935A00",background:"#FEF3E2",padding:"3px 10px",borderRadius:20,fontWeight:500}}>🏢 {distributors.length} distributor{distributors.length>1?"s":""}</span>}
           <a href="/knowledge" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}} title="Knowledge Base">📚 KB</a>
           <button className={styles.spamListBtn} onClick={()=>setShowFilters(v=>!v)}>⚙️ Filters {filterRules.length>0?`(${filterRules.length})`:""}</button>
           {lastSync && <span className={styles.syncTime}>Synced {lastSync.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>}
@@ -1348,7 +1445,12 @@ export default function Home() {
                         ?<div style={{color:"var(--text-secondary)",fontSize:12,lineHeight:1.4}}>🤖 {r.summary}</div>
                         :<div style={{color:"var(--text-secondary)",fontSize:12}}>{r.snippet?.slice(0,100)}…</div>}
                     </td>
-                    <td>{r.machineModel ? <ModelTag model={r.machineModel}/> : <span style={{color:"var(--text-secondary)",fontSize:12}}>—</span>}</td>
+                    <td>
+                      <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                        {r.machineModel ? <ModelTag model={r.machineModel}/> : <span style={{color:"var(--text-secondary)",fontSize:12}}>—</span>}
+                        {r.distributorCompany && <span style={{fontSize:10,background:"#FEF3E2",color:"#935A00",padding:"1px 6px",borderRadius:20,fontWeight:500}}>🏢 {r.distributorCompany}</span>}
+                      </div>
+                    </td>
                     <td><Badge label={r.category||"Other"} colorMap={CAT_BG}/></td>
                     <td>
                       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
