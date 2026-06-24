@@ -2,6 +2,7 @@ import { isDefiniteJunk } from "../../lib/junk-filter";
 import { normalizeModel } from "../../lib/models";
 
 export const config = { maxDuration: 60 };
+
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 
 function isObviousSpam(thread) {
@@ -12,47 +13,53 @@ function isObviousSpam(thread) {
   );
 }
 
-async function summarizeThread(thread) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return {
-      id: thread.id, isSpam: false, category: "Other",
-      summary: "Set ANTHROPIC_API_KEY in Vercel environment variables to enable AI summaries.",
-      resolution: thread.hasSent ? "Reply sent." : "Unresolved — no reply sent yet.",
-      flags: thread.hasSent ? [] : ["no-reply"], machineModel: null,
-    };
+// Analyze up to 5 threads in a SINGLE API call — much cheaper
+async function analyzeBatch(threads) {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) {
+    return threads.map(t => ({
+      id: t.id, isSpam: false, category: "Other",
+      summary: "Set ANTHROPIC_API_KEY in Vercel.",
+      resolution: t.hasSent ? "Reply sent." : "Unresolved — no reply sent yet.",
+      flags: t.hasSent ? [] : ["no-reply"], machineModel: null,
+    }));
   }
 
-  const prompt = `Classify this email for i2R CNC (CNC router manufacturer — sells machines only, does NOT offer cutting/engraving/woodworking services).
+  const prompt = `You are a classifier for i2R CNC (CNC router manufacturer — sells machines, does NOT offer cutting/engraving services).
 
-From: ${thread.customer} ${thread.customerEmail ? "<"+thread.customerEmail+">" : ""}
-Subject: ${thread.subject}
-Content: ${(thread.content || thread.snippet || "").slice(0, 600)}
-Has our reply: ${thread.hasSent}
+Classify each email thread below. Return a JSON array with one object per thread.
 
-Reply with JSON only — no markdown:
-{
-  "isSpam": true if junk/marketing/automated/newsletter/cold-outreach,
-  "category": one of: Hardware|Software|Setup|Connectivity|Warranty/Repair|Sales inquiry|Contact request|Unrelated|Other — use Unrelated if customer wants cutting/engraving services or is off-topic,
-  "summary": "1-2 sentences what customer needs",
-  "resolution": "1-2 sentences on resolution or Unresolved — no reply sent yet.",
-  "flags": array — no-reply if hasSent=false, urgent if angry/frustrated,
-  "machineModel": "i2R model in series format e.g. B.24 (not i2R 8), D.22, M+350, or null"
-}
+Each object must have:
+- "id": exact thread id
+- "isSpam": true if junk/marketing/automated/newsletter/cold-outreach
+- "category": Hardware|Software|Setup|Connectivity|Warranty/Repair|Sales inquiry|Contact request|Unrelated|Other (Unrelated = off-topic or wants cutting services)
+- "summary": 1 sentence what customer needs
+- "resolution": 1 sentence on resolution, or "Unresolved — no reply sent yet."
+- "flags": [] array — add "no-reply" if hasSent=false, "urgent" if angry tone
+- "machineModel": i2R series model like B.24 or null
 
-If spam: {"isSpam":true}`;
+If spam: just {"id":"...","isSpam":true}
+
+Threads:
+${threads.map(t => `ID: ${t.id}
+From: ${t.customer} ${t.customerEmail ? "<"+t.customerEmail+">" : ""}
+Subject: ${t.subject}
+Content: ${(t.content||t.snippet||"").slice(0,300)}
+Has reply: ${t.hasSent}`).join("\n---\n")}
+
+Return ONLY a JSON array. No markdown.`;
 
   try {
     const resp = await fetch(ANTHROPIC_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": apiKey,
+        "x-api-key": key,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 300,
+        max_tokens: 150 * threads.length, // ~150 tokens per thread
         messages: [{ role: "user", content: prompt }],
       }),
     });
@@ -60,40 +67,32 @@ If spam: {"isSpam":true}`;
     if (!resp.ok) {
       const err = await resp.text();
       console.error(`Anthropic HTTP ${resp.status}:`, err);
-      return {
-        id: thread.id, isSpam: false, category: "Other",
-        summary: `API error ${resp.status}`, resolution: "Unresolved.",
-        flags: thread.hasSent ? [] : ["no-reply"], machineModel: null,
-      };
+      return threads.map(t => ({ id: t.id, isSpam: false, category: "Other", summary: `API error ${resp.status}`, resolution: "Unresolved.", flags: [], machineModel: null }));
     }
 
     const data = await resp.json();
     if (data.error) {
       console.error("Anthropic error:", data.error);
-      return {
-        id: thread.id, isSpam: false, category: "Other",
-        summary: `Anthropic error: ${data.error.message}`,
-        resolution: "Unresolved.", flags: [], machineModel: null,
-      };
+      return threads.map(t => ({ id: t.id, isSpam: false, category: "Other", summary: `Error: ${data.error.message}`, resolution: "Unresolved.", flags: [], machineModel: null }));
     }
 
-    const text = (data.content?.[0]?.text || "{}").trim();
-    let parsed;
-    try { parsed = JSON.parse(text); }
+    const text = (data.content?.[0]?.text || "[]").trim();
+    let results;
+    try { results = JSON.parse(text); }
     catch {
-      const match = text.match(/\{[\s\S]*\}/);
-      parsed = match ? JSON.parse(match[0]) : { isSpam: false };
+      const match = text.match(/\[[\s\S]*\]/);
+      results = match ? JSON.parse(match[0]) : [];
     }
-    // Always normalize machine model to series format
-    if (parsed.machineModel) parsed.machineModel = normalizeModel(parsed.machineModel);
-    return { ...parsed, id: thread.id };
+
+    // Normalize machine models
+    if (Array.isArray(results)) {
+      results.forEach(r => { if (r.machineModel) r.machineModel = normalizeModel(r.machineModel); });
+      return results;
+    }
+    return threads.map(t => ({ id: t.id, isSpam: false, category: "Other", summary: "Parse error.", resolution: "Unresolved.", flags: [], machineModel: null }));
   } catch (err) {
     console.error("Fetch error:", err.message);
-    return {
-      id: thread.id, isSpam: false, category: "Other",
-      summary: `Network error: ${err.message}`, resolution: "Unresolved.",
-      flags: [], machineModel: null,
-    };
+    return threads.map(t => ({ id: t.id, isSpam: false, category: "Other", summary: `Network error.`, resolution: "Unresolved.", flags: [], machineModel: null }));
   }
 }
 
@@ -102,16 +101,25 @@ export default async function handler(req, res) {
   const { threads } = req.body;
   if (!threads?.length) return res.status(400).json({ error: "No threads" });
 
-  const results = [];
-  for (const thread of threads) {
-    if (isObviousSpam(thread)) {
-      results.push({ id: thread.id, isSpam: true });
-      continue;
+  // Step 1: filter obvious spam without any API call
+  const nonSpam = threads.filter(t => !isObviousSpam(t));
+  const spamResults = threads
+    .filter(t => isObviousSpam(t))
+    .map(t => ({ id: t.id, isSpam: true }));
+
+  if (!nonSpam.length) return res.status(200).json({ results: spamResults });
+
+  // Step 2: analyze remaining in batches of 5 — ONE API call per batch
+  const BATCH_SIZE = 5;
+  const analyzed = [];
+  for (let i = 0; i < nonSpam.length; i += BATCH_SIZE) {
+    const batch = nonSpam.slice(i, i + BATCH_SIZE);
+    const results = await analyzeBatch(batch);
+    analyzed.push(...results);
+    if (i + BATCH_SIZE < nonSpam.length) {
+      await new Promise(r => setTimeout(r, 300)); // rate limit buffer
     }
-    const result = await summarizeThread(thread);
-    results.push(result);
-    await new Promise(r => setTimeout(r, 200));
   }
 
-  return res.status(200).json({ results });
+  return res.status(200).json({ results: [...spamResults, ...analyzed] });
 }

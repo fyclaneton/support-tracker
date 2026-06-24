@@ -277,18 +277,36 @@ export default async function handler(req, res) {
       } catch { continue; }
     }
 
-    // AI analyze all processed threads
+    // AI analyze in batches of 5 — one API call per batch instead of per thread
     const analyzed = [];
-    for (const thread of processed) {
-      const result = await aiAnalyze(thread);
-      if (result.isSpam || result.isNotOurService) continue;
-      analyzed.push({
-        ...thread,
-        ...result,
-        machineModel: result.machineModel || thread.machineModel || null,
-        status: thread.status,
-      });
-      await new Promise(r => setTimeout(r, 100));
+    const BATCH = 5;
+    for (let i = 0; i < processed.length; i += BATCH) {
+      const batch = processed.slice(i, i + BATCH);
+      // Call analyze endpoint which handles batching internally
+      try {
+        const analyzeRes = await fetch(`${process.env.NEXTAUTH_URL || "https://support-tracker-theta.vercel.app"}/api/analyze`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ threads: batch }),
+        });
+        const analyzeData = await analyzeRes.json();
+        const map = {};
+        (analyzeData.results || []).forEach(r => { map[r.id] = r; });
+        for (const thread of batch) {
+          const result = map[thread.id];
+          if (!result || result.isSpam || result.isNotOurService) continue;
+          analyzed.push({
+            ...thread, ...result,
+            machineModel: normalizeModel(result.machineModel || thread.machineModel || null),
+            status: thread.status,
+          });
+        }
+      } catch(e) {
+        console.error("Batch analyze error:", e.message);
+        // On error, include threads without AI summary rather than losing them
+        batch.forEach(t => analyzed.push({ ...t, summary: "Analysis failed.", resolution: t.hasSent ? "Reply sent." : "Unresolved.", category: "Other", flags: [] }));
+      }
+      await new Promise(r => setTimeout(r, 200));
     }
 
     // Save to Upstash

@@ -17,7 +17,12 @@ export default async function handler(req, res) {
     // Get all saved thread IDs from index
     const savedIds = await kvGet("shared:saved-thread-ids");
     if (!savedIds || !Array.isArray(savedIds) || savedIds.length === 0) {
-      return res.status(200).json({ threads: [], total: 0 });
+      return res.status(200).json({ threads: [], ids: [], total: 0 });
+    }
+
+    // idsOnly mode — just return IDs, much faster, used to check what's already saved
+    if (req.query.idsOnly === "true") {
+      return res.status(200).json({ ids: savedIds, total: savedIds.length });
     }
 
     // Fetch all threads in parallel batches of 20
