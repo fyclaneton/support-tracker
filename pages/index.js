@@ -724,6 +724,15 @@ export default function Home() {
           fetch("/api/import-progress", { method:"DELETE" }).catch(console.error);
           setBulkRunning(false);
           setBulkDone(true);
+          // Reload ALL saved threads from Upstash so dashboard shows complete picture
+          try {
+            const res = await fetch("/api/saved-threads");
+            const data = await res.json();
+            if (data.threads?.length) {
+              setThreads(data.threads);
+              setSavedTotal(data.total || 0);
+            }
+          } catch(e) { console.error("Reload after import error:", e); }
         }
       } catch(e) {
         console.error("Bulk import error:", e);
@@ -752,6 +761,21 @@ export default function Home() {
         body: JSON.stringify({ threadId, action: "remove" }),
       });
     } catch(e) { console.error("Remove thread error:", e); }
+  }
+
+  async function reloadFromSaved() {
+    setSavedLoading(true);
+    try {
+      const res = await fetch("/api/saved-threads");
+      const data = await res.json();
+      if (data.threads?.length) {
+        setThreads(data.threads);
+        setSavedTotal(data.total || 0);
+        setSpamToast(`✓ Reloaded ${data.total} threads from database.`);
+        setTimeout(() => setSpamToast(null), 3000);
+      }
+    } catch(e) { console.error(e); }
+    finally { setSavedLoading(false); }
   }
 
   async function migrateModels() {
@@ -1148,14 +1172,23 @@ export default function Home() {
         {/* Bulk import banner */}
         <div className={styles.histBanner}>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",flex:1}}>
-            <span style={{fontSize:13}}>📂 <strong>Bulk historical import</strong> — loads all emails from past 2 years, filters spam, saves to Upstash + Sheet</span>
-            {bulkProgress && (
+            <span style={{fontSize:13}}>📂 <strong>Bulk historical import</strong> — loads all emails from past 2 years, filters spam, saves to database</span>
+            {bulkProgress && !bulkDone && (
               <span style={{fontSize:12,color:"var(--text-secondary)"}}>
-                {bulkProgress.loaded} processed · {bulkProgress.saved} saved
+                {bulkProgress.loaded} processed · <strong style={{color:"#1D9E75"}}>{bulkProgress.saved} saved</strong>
                 {bulkProgress.total>0 && ` · ~${bulkProgress.total} total`}
               </span>
             )}
-            {bulkDone && <span style={{fontSize:12,color:"#1D9E75",fontWeight:500}}>✓ Import complete</span>}
+            {bulkDone && (
+              <span style={{fontSize:12,color:"#1D9E75",fontWeight:500}}>
+                ✓ Complete — {bulkProgress?.saved || 0} threads saved
+              </span>
+            )}
+            {importPageToken && !bulkRunning && !bulkDone && (
+              <span style={{fontSize:12,color:"#185FA5"}}>
+                Paused · {bulkProgress?.loaded || 0} processed so far
+              </span>
+            )}
             {bulkRunning && <span className={styles.aiPill} style={{fontSize:11}}>🤖 Importing &amp; analyzing…</span>}
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
@@ -1175,16 +1208,21 @@ export default function Home() {
                   </button>
                 )
             }
-            {!bulkRunning && savedTotal > 0 && (
+            {!bulkRunning && (
               <>
-                {!migrationDone && (
+                <button className={styles.btn} onClick={reloadFromSaved} disabled={savedLoading} title="Reload all threads from database">
+                  {savedLoading ? "Loading…" : "↺ Reload"}
+                </button>
+                {savedTotal > 0 && !migrationDone && (
                   <button className={styles.btn} onClick={migrateModels} title="Fix old i2R 4/6/8 tags to B.22/B.23/B.24">
                     🔧 Fix model tags
                   </button>
                 )}
-                <button className={styles.btn} style={{color:"#993C1D",borderColor:"#993C1D"}} onClick={clearSavedData}>
-                  🗑 Clear &amp; re-import
-                </button>
+                {savedTotal > 0 && (
+                  <button className={styles.btn} style={{color:"#993C1D",borderColor:"#993C1D"}} onClick={clearSavedData}>
+                    🗑 Clear &amp; re-import
+                  </button>
+                )}
               </>
             )}
           </div>
