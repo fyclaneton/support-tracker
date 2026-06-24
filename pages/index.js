@@ -674,80 +674,90 @@ export default function Home() {
     finally { setHistLoading(false); }
   }
 
-  // Bulk import — runs page by page, saves progress to Upstash after each batch
+  // Use a ref to track running state so recursive setTimeout can check it
+  const bulkRunningRef = useRef(false);
+
   async function startBulkImport(token = null) {
+    bulkRunningRef.current = true;
     setBulkRunning(true);
     setBulkDone(false);
-    // Use passed token, or saved importPageToken, or start fresh
+
     let pageToken = token ?? importPageToken ?? null;
     let totalLoaded = bulkProgress?.loaded || 0;
     let totalSaved  = bulkProgress?.saved  || 0;
+    let totalFetched = bulkProgress?.fetched || 0;
+    let grandTotal  = bulkProgress?.total  || 0;
 
-    const run = async () => {
-      if (!bulkRunning) return; // Stopped by user
+    const runBatch = async () => {
+      if (!bulkRunningRef.current) return;
       try {
         const res = await fetch("/api/bulk-import", {
           method:"POST", headers:{"Content-Type":"application/json"},
           body: JSON.stringify({ pageToken }),
         });
         const data = await res.json();
-        if (data.error) { console.error("Bulk import error:", data.error); setBulkRunning(false); return; }
+        if (data.error) {
+          console.error("Bulk import error:", data.error);
+          bulkRunningRef.current = false;
+          setBulkRunning(false);
+          return;
+        }
 
-        totalLoaded += data.processed || 0;
-        totalSaved  += data.saved || 0;
-        const total = data.totalEstimate || bulkProgress?.total || 0;
-        const totalFetched = (bulkProgress?.fetched || 0) + (data.fetched || 0);
-        setBulkProgress({ loaded: totalLoaded, saved: totalSaved, total, fetched: totalFetched });
+        totalLoaded  += data.processed || 0;
+        totalSaved   += data.saved     || 0;
+        totalFetched += data.fetched   || 0;
+        grandTotal    = data.totalEstimate || grandTotal;
 
-        // Add new threads to dashboard
+        // Force immediate re-render with new counts
+        setBulkProgress({ loaded: totalLoaded, saved: totalSaved, fetched: totalFetched, total: grandTotal });
+
+        // Add new threads to dashboard immediately
         if (data.threads?.length) {
           setThreads(prev => {
-            const existing = new Set(prev.map(t=>t.id));
-            const fresh = data.threads.filter(t=>!existing.has(t.id));
-            return [...prev, ...fresh];
+            const existing = new Set(prev.map(t => t.id));
+            const fresh = data.threads.filter(t => !existing.has(t.id));
+            return fresh.length ? [...prev, ...fresh] : prev;
           });
         }
 
-        if (data.nextPageToken) {
+        if (data.nextPageToken && bulkRunningRef.current) {
           pageToken = data.nextPageToken;
           setImportPageToken(pageToken);
-          // Save progress to Upstash so we can resume after refresh
+          // Save progress to KV
           fetch("/api/import-progress", {
             method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ pageToken, processed: totalLoaded, saved: totalSaved, total }),
+            body: JSON.stringify({ pageToken, processed: totalLoaded, saved: totalSaved, fetched: totalFetched, total: grandTotal }),
           }).catch(console.error);
-          // Small pause between pages
-          await new Promise(r => setTimeout(r, 1000));
-          await run();
+          // Use setTimeout so React can re-render before next batch
+          setTimeout(runBatch, 500);
         } else {
-          // Import complete — clear saved progress
+          // Done
           setImportPageToken(null);
           fetch("/api/import-progress", { method:"DELETE" }).catch(console.error);
+          bulkRunningRef.current = false;
           setBulkRunning(false);
           setBulkDone(true);
-          // Reload ALL saved threads from Upstash so dashboard shows complete picture
+          // Reload full dataset from Upstash
           try {
-            const res = await fetch("/api/saved-threads");
-            const data = await res.json();
-            if (data.threads?.length) {
-              setThreads(data.threads);
-              setSavedTotal(data.total || 0);
-            }
-          } catch(e) { console.error("Reload after import error:", e); }
+            const r2 = await fetch("/api/saved-threads");
+            const d2 = await r2.json();
+            if (d2.threads?.length) { setThreads(d2.threads); setSavedTotal(d2.total || 0); }
+          } catch(e) { console.error("Reload error:", e); }
         }
       } catch(e) {
-        console.error("Bulk import error:", e);
-        // Save progress so user can resume
+        console.error("Bulk import batch error:", e);
         if (pageToken) {
           fetch("/api/import-progress", {
             method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ pageToken, processed: totalLoaded, saved: totalSaved, total: bulkProgress?.total || 0 }),
+            body: JSON.stringify({ pageToken, processed: totalLoaded, saved: totalSaved, total: grandTotal }),
           }).catch(console.error);
         }
+        bulkRunningRef.current = false;
         setBulkRunning(false);
       }
     };
-    await run();
+
+    runBatch();
   }
 
   // Mark Unrelated — removes from dashboard, Upstash, and Sheet immediately
@@ -1206,7 +1216,7 @@ export default function Home() {
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
             {bulkRunning
-              ? <button className={styles.btn} onClick={()=>{ setBulkRunning(false); }}>⏸ Pause</button>
+              ? <button className={styles.btn} onClick={()=>{ bulkRunningRef.current = false; setBulkRunning(false); }}>⏸ Pause</button>
               : bulkDone
               ? <span style={{fontSize:12,color:"#1D9E75",fontWeight:500}}>✓ Import complete</span>
               : importPageToken
