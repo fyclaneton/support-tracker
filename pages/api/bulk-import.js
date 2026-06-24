@@ -2,38 +2,26 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { google } from "googleapis";
 import { detectMachineModel, normalizeModel } from "../../lib/models";
-import { kvGet, kvSet, kvKeys } from "../../lib/kv";
+import { kvGet, kvSet } from "../../lib/kv";
 import { isDefiniteJunk } from "../../lib/junk-filter";
 
-// POST /api/bulk-import { action: "start"|"next", pageToken, existingIds }
-// Fetches one page of historical emails, filters, analyzes, saves to KV + Sheet
-// Returns { threads, nextPageToken, totalEstimate, saved, skipped }
-
 export const config = { maxDuration: 60 };
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function extractCustomer(messages) {
   for (const msg of messages) {
     const headers = msg.payload?.headers || [];
     const from = headers.find(h => h.name === "From")?.value || "";
     const fl = from.toLowerCase();
-
-    // Shopify contact form — customer info in Reply-To header
     if (fl.includes("mailer@shopify.com")) {
       const replyTo = headers.find(h => h.name === "Reply-To")?.value || "";
-      if (replyTo) {
-        const match = replyTo.match(/^([^<]+)</);
-        if (match) return match[1].trim();
-        const em = replyTo.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
-        if (em) return em[0];
-      }
+      if (replyTo) { const m = replyTo.match(/^([^<]+)</); if (m) return m[1].trim(); }
       return "Shopify Contact Form";
     }
-
     if (from && !fl.includes("i2rcnc") && !fl.includes("noreply") && !fl.includes("no-reply") && !fl.includes("do-not-reply") && !fl.includes("mailer")) {
-      const match = from.match(/^([^<]+)</);
-      if (match) return match[1].trim();
-      const em = from.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
-      if (em) return em[0];
+      const m = from.match(/^([^<]+)</); if (m) return m[1].trim();
+      const em = from.match(/([^@\s]+@[^\s>]+)/); if (em) return em[1];
     }
   }
   return null;
@@ -62,96 +50,84 @@ function extractSubject(messages) {
 
 function decodeBase64(data) {
   if (!data) return "";
-  try { return Buffer.from(data.replace(/-/g,"+").replace(/_/g,"/"), "base64").toString("utf-8"); } catch { return ""; }
+  try { return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8"); } catch { return ""; }
 }
 
 function stripHtml(html) {
-  return html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"").replace(/<[^>]+>/g," ").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/\s+/g," ").trim().slice(0,800);
+  return html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim().slice(0, 600);
 }
 
-function extractText(part, depth=0) {
-  if (!part||depth>6) return "";
-  if (part.mimeType==="text/plain"&&part.body?.data) { const t=decodeBase64(part.body.data).trim(); if(t.length>20) return t.slice(0,800); }
-  if (part.mimeType==="text/html"&&part.body?.data) { const t=stripHtml(decodeBase64(part.body.data)); if(t.length>20) return t; }
+function extractText(part, depth = 0) {
+  if (!part || depth > 5) return "";
+  if (part.mimeType === "text/plain" && part.body?.data) { const t = decodeBase64(part.body.data).trim(); if (t.length > 20) return t.slice(0, 600); }
+  if (part.mimeType === "text/html" && part.body?.data) { const t = stripHtml(decodeBase64(part.body.data)); if (t.length > 20) return t; }
   if (part.parts?.length) {
-    for (const p of part.parts) { if(p.mimeType==="text/plain"){const t=extractText(p,depth+1);if(t)return t;} }
-    for (const p of part.parts) { if(p.mimeType==="text/html"){const t=extractText(p,depth+1);if(t)return t;} }
-    for (const p of part.parts) { const t=extractText(p,depth+1);if(t)return t; }
+    for (const p of part.parts) { if (p.mimeType === "text/plain") { const t = extractText(p, depth+1); if (t) return t; } }
+    for (const p of part.parts) { if (p.mimeType === "text/html") { const t = extractText(p, depth+1); if (t) return t; } }
+    for (const p of part.parts) { const t = extractText(p, depth+1); if (t) return t; }
   }
   return "";
 }
 
-function cleanSnippet(s) { return (s||"").replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&amp;/g,"&").replace(/\s+/g," ").trim().slice(0,300); }
+function cleanSnippet(s) {
+  return (s || "").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/\s+/g, " ").trim().slice(0, 200);
+}
 
 function buildContent(messages) {
-  const cMsg = messages.find(m=>{ const f=m.payload?.headers?.find(h=>h.name==="From")?.value||""; return !f.toLowerCase().includes("i2rcnc")&&!f.toLowerCase().includes("noreply"); })||messages[0];
-  const b1 = extractText(cMsg?.payload)||cleanSnippet(cMsg?.snippet);
-  const last = messages[messages.length-1];
-  const isUs = (last?.payload?.headers?.find(h=>h.name==="From")?.value||"").toLowerCase().includes("i2rcnc");
-  const b2 = last&&last!==cMsg ? extractText(last.payload) : "";
-  return [b1, b2?(isUs?"Our reply: ":"")+b2.slice(0,300):""].filter(Boolean).join(" | ").slice(0,1200)||"No content";
+  const cMsg = messages.find(m => { const f = m.payload?.headers?.find(h => h.name === "From")?.value || ""; return !f.toLowerCase().includes("i2rcnc") && !f.toLowerCase().includes("noreply"); }) || messages[0];
+  const b1 = extractText(cMsg?.payload) || cleanSnippet(cMsg?.snippet);
+  const last = messages[messages.length - 1];
+  const isUs = (last?.payload?.headers?.find(h => h.name === "From")?.value || "").toLowerCase().includes("i2rcnc");
+  const b2 = last && last !== cMsg ? extractText(last.payload) : "";
+  return [b1, b2 ? (isUs ? "Our reply: " : "") + b2.slice(0, 200) : ""].filter(Boolean).join(" | ").slice(0, 800) || "No content";
 }
 
 function deriveStatus(messages) {
-  const lastFrom = (messages[messages.length-1]?.payload?.headers?.find(h=>h.name==="From")?.value||"").toLowerCase();
-  const labels = messages.flatMap(m=>m.labelIds||[]);
-  return (lastFrom.includes("i2rcnc")||labels.includes("SENT")) ? "Resolved" : "Open";
+  const lastFrom = (messages[messages.length - 1]?.payload?.headers?.find(h => h.name === "From")?.value || "").toLowerCase();
+  const labels = messages.flatMap(m => m.labelIds || []);
+  return (lastFrom.includes("i2rcnc") || labels.includes("SENT")) ? "Resolved" : "Open";
 }
 
 async function aiAnalyze(thread) {
   const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return { isSpam: false, category:"Other", summary:"No API key set.", resolution: thread.hasSent?"Reply sent.":"Unresolved.", flags:[], machineModel:null };
+  if (!key) return { isSpam: false, category: "Other", summary: "No API key.", resolution: thread.hasSent ? "Reply sent." : "Unresolved — no reply sent yet.", flags: [], machineModel: null };
 
-  const prompt = `Classify this email for i2R CNC (CNC router manufacturer — sells machines only, does NOT offer cutting/engraving/woodworking services).
+  const prompt = `Classify this email for i2R CNC (CNC router manufacturer — sells machines only).
 
-From: ${thread.customer} ${thread.customerEmail?"<"+thread.customerEmail+">":""}
+From: ${thread.customer} ${thread.customerEmail ? "<" + thread.customerEmail + ">" : ""}
 Subject: ${thread.subject}
-Content: ${(thread.content||"").slice(0,500)}
+Content: ${(thread.content || "").slice(0, 400)}
 Has our reply: ${thread.hasSent}
 
-Return JSON only — no markdown:
-{
-  "isSpam": true if junk/marketing/automated/newsletter/cold-outreach (not from a real customer),
-  "category": one of: Hardware|Software|Setup|Connectivity|Warranty/Repair|Sales inquiry|Contact request|Unrelated|Other
-    Use "Unrelated" if: customer wants cutting/engraving/woodworking SERVICES, completely off-topic, or not related to CNC machines at all,
-  "summary": "1-2 sentences on what the customer needs",
-  "resolution": "1-2 sentences on how it was resolved, or Unresolved — no reply sent yet.",
-  "flags": array — include no-reply if hasSent=false, urgent if angry/urgent language,
-  "machineModel": "i2R model in series format e.g. B.24 (not i2R 8), D.22, M+350, or null"
-}
-
+JSON only:
+{"isSpam":false,"category":"Hardware|Software|Setup|Connectivity|Warranty/Repair|Sales inquiry|Contact request|Unrelated|Other","summary":"1-2 sentences","resolution":"1-2 sentences or Unresolved — no reply sent yet.","flags":[],"machineModel":"B.24 or null"}
 If spam: {"isSpam":true}`;
 
   try {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method:"POST",
-      headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01"},
-      body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:300, messages:[{role:"user",content:prompt}] }),
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 250, messages: [{ role: "user", content: prompt }] }),
     });
     const data = await resp.json();
-    if (!resp.ok||data.error) return { isSpam:false, category:"Other", summary:`API error: ${data.error?.message||resp.status}`, resolution:"Unresolved.", flags:[], machineModel:null };
-    const text = (data.content?.[0]?.text||"{}").trim();
-    try { return JSON.parse(text); } catch {
-      const m = text.match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : { isSpam:false };
-    }
-  } catch(err) { return { isSpam:false, category:"Other", summary:`Network error: ${err.message}`, resolution:"Unresolved.", flags:[], machineModel:null }; }
+    if (!resp.ok || data.error) return { isSpam: false, category: "Other", summary: "AI error.", resolution: "Unresolved.", flags: [], machineModel: null };
+    const text = (data.content?.[0]?.text || "{}").trim();
+    try { const p = JSON.parse(text); if (p.machineModel) p.machineModel = normalizeModel(p.machineModel); return p; }
+    catch { const m = text.match(/\{[\s\S]*\}/); const p = m ? JSON.parse(m[0]) : { isSpam: false }; if (p.machineModel) p.machineModel = normalizeModel(p.machineModel); return p; }
+  } catch { return { isSpam: false, category: "Other", summary: "Network error.", resolution: "Unresolved.", flags: [], machineModel: null }; }
 }
 
 async function getSavedIds() {
-  try { const raw = await kvGet("shared:saved-thread-ids"); return new Set(Array.isArray(raw)?raw:[]); } catch { return new Set(); }
+  try { const raw = await kvGet("shared:saved-thread-ids"); return new Set(Array.isArray(raw) ? raw : []); } catch { return new Set(); }
 }
 
-async function saveThreads(threads) {
+async function saveThreadBatch(threads, savedIds) {
   if (!threads.length) return 0;
-  const savedIds = await getSavedIds();
   const newOnes = threads.filter(t => t.id && !savedIds.has(t.id));
   if (!newOnes.length) return 0;
-  // Save each thread individually
   for (const t of newOnes) {
-    try { await kvSet(`thread:${t.id}`, t); } catch(e) { console.error("KV save error for", t.id, e.message); }
+    try { await kvSet(`thread:${t.id}`, t); savedIds.add(t.id); } catch (e) { console.error("KV save error:", t.id, e.message); }
   }
-  // Update the ID index
-  newOnes.forEach(t => savedIds.add(t.id));
   await kvSet("shared:saved-thread-ids", [...savedIds]);
   return newOnes.length;
 }
@@ -162,88 +138,132 @@ async function syncToSheet(threads, accessToken) {
     if (!sheetInfo?.spreadsheetId) return;
     const oauth2Client = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
     oauth2Client.setCredentials({ access_token: accessToken });
-    const sheets = google.sheets({ version:"v4", auth:oauth2Client });
+    const sheets = google.sheets({ version: "v4", auth: oauth2Client });
     const { spreadsheetId } = sheetInfo;
-
-    const existingRes = await sheets.spreadsheets.values.get({ spreadsheetId, range:"Threads!A:A" });
-    const existingIds = new Set((existingRes.data.values||[]).map(r=>r[0]));
+    const existingRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: "Threads!A:A" });
+    const existingIds = new Set((existingRes.data.values || []).map(r => r[0]));
     const toAppend = threads.filter(t => !existingIds.has(t.id));
     if (!toAppend.length) return;
-
+    const checkRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: "Threads!A1:A1" });
     const HEADER = ["Thread ID","Date","Customer","Subject","Category","Status","Machine Model","Flags","AI Summary","Resolution","Has Reply","Saved At"];
-    const checkRes = await sheets.spreadsheets.values.get({ spreadsheetId, range:"Threads!A1:A1" });
     if (!checkRes.data.values?.length) {
-      await sheets.spreadsheets.values.update({ spreadsheetId, range:"Threads!A1", valueInputOption:"RAW", requestBody:{ values:[HEADER] } });
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: "Threads!A1", valueInputOption: "RAW", requestBody: { values: [HEADER] } });
     }
     await sheets.spreadsheets.values.append({
-      spreadsheetId, range:"Threads!A:L", valueInputOption:"RAW",
-      requestBody:{ values: toAppend.map(t=>[t.id||"",t.date||"",t.customer||"",t.subject||"",t.category||"",t.status||"",t.machineModel||"",(t.flags||[]).join(", "),t.summary||"",t.resolution||"",t.hasSent?"Yes":"No",new Date().toLocaleString()]) },
+      spreadsheetId, range: "Threads!A:L", valueInputOption: "RAW",
+      requestBody: { values: toAppend.map(t => [t.id||"",t.date||"",t.customer||"",t.subject||"",t.category||"",t.status||"",t.machineModel||"",(t.flags||[]).join(", "),t.summary||"",t.resolution||"",t.hasSent?"Yes":"No",new Date().toLocaleString()]) },
     });
-  } catch(err) { console.error("Sheet sync error:", err.message); }
+  } catch (err) { console.error("Sheet sync error:", err.message); }
 }
+
+// ── Main handler ─────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
   const session = await getServerSession(req, res, authOptions);
-  if (!session) return res.status(401).json({ error:"Unauthorized" });
+  if (!session) return res.status(401).json({ error: "Unauthorized" });
 
   const { pageToken } = req.body || {};
 
   try {
     const oauth2Client = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
     oauth2Client.setCredentials({ access_token: session.accessToken });
-    const gmail = google.gmail({ version:"v1", auth:oauth2Client });
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-    // 2 years back
-    const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear()-2);
+    const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 2);
     const dateStr = `${cutoff.getFullYear()}/${String(cutoff.getMonth()+1).padStart(2,"0")}/${String(cutoff.getDate()).padStart(2,"0")}`;
 
-    // Get already-saved IDs to skip duplicates
+    // Load saved IDs once
     const savedIds = await getSavedIds();
 
+    // List threads — use metadata format first (fast) to pre-filter
     const listRes = await gmail.users.threads.list({
-      userId:"me",
-      q:`in:anywhere -in:spam -in:trash -in:draft (category:primary OR category:forums) -category:promotions -category:updates -category:social after:${dateStr}`,
-      maxResults:10, // smaller batch so we don't timeout
-      pageToken: pageToken||undefined,
+      userId: "me",
+      q: `in:anywhere -in:spam -in:trash -in:draft (category:primary OR category:forums) -category:promotions -category:updates -category:social after:${dateStr}`,
+      maxResults: 15,
+      pageToken: pageToken || undefined,
+      fields: "threads/id,nextPageToken,resultCountEstimate",
     });
 
-    const threads = listRes.data.threads||[];
-    const nextPageToken = listRes.data.nextPageToken||null;
-    const totalEstimate = listRes.data.resultCountEstimate||0;
+    const threads = listRes.data.threads || [];
+    const nextPageToken = listRes.data.nextPageToken || null;
+    const totalEstimate = listRes.data.resultCountEstimate || 0;
 
-    // Filter out already-saved threads
+    // Pre-filter: skip already saved
     const unseen = threads.filter(t => !savedIds.has(t.id));
+    const skippedDupes = threads.length - unseen.length;
 
-    // Fetch full content for unseen threads
-    const processed = [];
+    if (!unseen.length) {
+      return res.status(200).json({ threads: [], nextPageToken, totalEstimate, processed: 0, saved: 0, skipped: threads.length });
+    }
+
+    // Fetch full content — use metadata format first to check sender/subject before fetching full
+    const prefiltered = [];
     for (const t of unseen) {
       try {
-        const threadRes = await gmail.users.threads.get({ userId:"me", id:t.id, format:"full" });
-        const messages = threadRes.data.messages||[];
+        // Fetch metadata only first — much faster than full
+        const meta = await gmail.users.threads.get({
+          userId: "me", id: t.id, format: "metadata",
+          metadataHeaders: ["From", "Subject", "Reply-To", "Date"],
+        });
+        const messages = meta.data.messages || [];
         const subject = extractSubject(messages);
-        const fromHeader = messages[0]?.payload?.headers?.find(h=>h.name==="From")?.value||"";
-
-        if (isDefiniteJunk(fromHeader, subject, extractCustomer(messages) || "")) continue;
+        const fromHeader = messages[0]?.payload?.headers?.find(h => h.name === "From")?.value || "";
         const customer = extractCustomer(messages);
+
+        // Quick junk check on metadata only — skip full fetch if junk
+        if (isDefiniteJunk(fromHeader, subject, customer || "")) continue;
         if (!customer) continue;
 
-        const content = buildContent(messages);
-        const labels = messages.flatMap(m=>m.labelIds||[]);
+        prefiltered.push({ t, messages, subject, fromHeader, customer });
+      } catch { continue; }
+    }
+
+    if (!prefiltered.length) {
+      return res.status(200).json({ threads: [], nextPageToken, totalEstimate, processed: 0, saved: 0, skipped: threads.length });
+    }
+
+    // Now fetch full content only for threads that passed metadata filter
+    const processed = [];
+    for (const { t, subject, fromHeader, customer } of prefiltered) {
+      try {
+        const full = await gmail.users.threads.get({ userId: "me", id: t.id, format: "full" });
+        const messages = full.data.messages || [];
+        const labels = messages.flatMap(m => m.labelIds || []);
         const hasSentReply = labels.includes("SENT");
+        const content = buildContent(messages);
+
+        // Apply custom rules
+        let customRules = [];
+        try { const raw = await kvGet("shared:filter-rules"); customRules = Array.isArray(raw) ? raw : []; } catch {}
+        const fl = fromHeader.toLowerCase(), sl = subject.toLowerCase();
+        let blocked = false;
+        for (const rule of customRules) {
+          const v = rule.value.toLowerCase();
+          if ((rule.type === "sender" || rule.type === "domain") && fl.includes(v)) { blocked = true; break; }
+          if (rule.type === "keyword" && sl.includes(v)) { blocked = true; break; }
+        }
+        if (blocked) continue;
 
         processed.push({
-          id:t.id, date:extractDate(messages), customer,
-          customerEmail:extractCustomerEmail(messages),
-          subject, content, snippet:cleanSnippet(messages[0]?.snippet)||content.slice(0,200),
-          status:deriveStatus(messages), hasSent:hasSentReply,
-          messageCount:messages.length, machineModel:normalizeModel(detectMachineModel(subject+" "+content)),
-          isHistorical:true,
+          id: t.id,
+          date: extractDate(messages),
+          customer,
+          customerEmail: extractCustomerEmail(messages),
+          subject,
+          content,
+          snippet: cleanSnippet(messages[0]?.snippet) || content.slice(0, 150),
+          status: deriveStatus(messages),
+          hasSent: hasSentReply,
+          messageCount: messages.length,
+          hoursWaiting: null,
+          machineModel: normalizeModel(detectMachineModel(subject + " " + content)),
+          isHistorical: true,
         });
       } catch { continue; }
     }
 
-    // AI analyze each one
+    // AI analyze all processed threads
     const analyzed = [];
     for (const thread of processed) {
       const result = await aiAnalyze(thread);
@@ -251,26 +271,31 @@ export default async function handler(req, res) {
       analyzed.push({
         ...thread,
         ...result,
-        machineModel: result.machineModel||thread.machineModel||null,
-        status: thread.status, // keep auto-derived status
+        machineModel: result.machineModel || thread.machineModel || null,
+        status: thread.status,
       });
-      await new Promise(r=>setTimeout(r,150)); // rate limit buffer
+      await new Promise(r => setTimeout(r, 100));
     }
 
-    // Save to Upstash + Sheet
-    const savedCount = await saveThreads(analyzed);
-    await syncToSheet(analyzed, session.accessToken);
+    // Save to Upstash
+    const savedCount = await saveThreadBatch(analyzed, savedIds);
+
+    // Sync to sheet (non-blocking)
+    if (analyzed.length > 0) {
+      syncToSheet(analyzed, session.accessToken).catch(e => console.error("Sheet sync error:", e));
+    }
 
     return res.status(200).json({
       threads: analyzed,
       nextPageToken,
       totalEstimate,
       processed: processed.length,
+      fetched: unseen.length,
       saved: savedCount,
-      skipped: threads.length - unseen.length,
+      skipped: skippedDupes + (unseen.length - processed.length),
     });
-  } catch(err) {
+  } catch (err) {
     console.error("Bulk import error:", err);
-    return res.status(500).json({ error:err.message });
+    return res.status(500).json({ error: err.message });
   }
 }

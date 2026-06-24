@@ -696,7 +696,8 @@ export default function Home() {
         totalLoaded += data.processed || 0;
         totalSaved  += data.saved || 0;
         const total = data.totalEstimate || bulkProgress?.total || 0;
-        setBulkProgress({ loaded: totalLoaded, saved: totalSaved, total });
+        const totalFetched = (bulkProgress?.fetched || 0) + (data.fetched || 0);
+        setBulkProgress({ loaded: totalLoaded, saved: totalSaved, total, fetched: totalFetched });
 
         // Add new threads to dashboard
         if (data.threads?.length) {
@@ -1174,19 +1175,31 @@ export default function Home() {
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",flex:1}}>
             <span style={{fontSize:13}}>📂 <strong>Bulk historical import</strong> — loads all emails from past 2 years, filters spam, saves to database</span>
             {bulkProgress && !bulkDone && (
-              <span style={{fontSize:12,color:"var(--text-secondary)"}}>
-                {bulkProgress.loaded} processed · <strong style={{color:"#1D9E75"}}>{bulkProgress.saved} saved</strong>
-                {bulkProgress.total>0 && ` · ~${bulkProgress.total} total`}
-              </span>
+              <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
+                <span style={{fontSize:12,color:"var(--text-secondary)"}}>
+                  📥 <strong>{bulkProgress.fetched||0}</strong> fetched
+                </span>
+                <span style={{fontSize:12,color:"var(--text-secondary)"}}>
+                  🔍 <strong>{bulkProgress.loaded||0}</strong> passed filter
+                </span>
+                <span style={{fontSize:12,fontWeight:500,color:"#1D9E75"}}>
+                  💾 <strong>{bulkProgress.saved||0}</strong> saved
+                </span>
+                {bulkProgress.total>0 && (
+                  <span style={{fontSize:12,color:"var(--text-secondary)"}}>
+                    ~{bulkProgress.total.toLocaleString()} total emails
+                  </span>
+                )}
+              </div>
             )}
             {bulkDone && (
               <span style={{fontSize:12,color:"#1D9E75",fontWeight:500}}>
-                ✓ Complete — {bulkProgress?.saved || 0} threads saved
+                ✓ Complete — {bulkProgress?.saved || 0} threads saved to database
               </span>
             )}
             {importPageToken && !bulkRunning && !bulkDone && (
               <span style={{fontSize:12,color:"#185FA5"}}>
-                Paused · {bulkProgress?.loaded || 0} processed so far
+                ⏸ Paused · {bulkProgress?.saved || 0} saved so far
               </span>
             )}
             {bulkRunning && <span className={styles.aiPill} style={{fontSize:11}}>🤖 Importing &amp; analyzing…</span>}
