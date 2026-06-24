@@ -470,15 +470,13 @@ export default function Home() {
           machineModel: normalizeM(map[t.id]?.machineModel || t.machineModel || null),
         }));
 
-      // Auto-save passing threads to Upstash + Sheet (awaited so reload sees them)
+      // Auto-save passing threads to Upstash + Sheet (fire and forget - don't block UI)
       if (passing.length > 0) {
-        try {
-          await fetch("/api/save-threads", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ threads: passing }),
-          });
-        } catch(e) { console.error("Auto-save error:", e); }
+        fetch("/api/save-threads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ threads: passing }),
+        }).catch(e => console.error("Auto-save error:", e));
       }
 
       return passing;
@@ -518,36 +516,37 @@ export default function Home() {
   useEffect(() => {
     if (!session || session.error) return;
 
-    const init = async () => {
-      // 1. Load saved threads from Upstash immediately (full history, instant)
-      setSavedLoading(true);
-      try {
-        const r = await fetch("/api/saved-threads");
-        const data = await r.json();
+    // Step 1: Load shared database from Upstash instantly
+    setSavedLoading(true);
+    fetch("/api/saved-threads")
+      .then(r => r.json())
+      .then(data => {
         if (data.threads?.length) {
           setThreads(data.threads);
           setSavedTotal(data.total || 0);
         }
-      } catch(e) { console.error("Load saved error:", e); }
-      finally { setSavedLoading(false); }
+      })
+      .catch(e => console.error("Load saved error:", e))
+      .finally(() => setSavedLoading(false));
 
-      // 2. Fetch last 3 months from current signed-in account's Gmail
-      //    analyzeThreads inside fetchThreads auto-saves new threads to Upstash + Sheet
-      await fetchThreads(null, false);
+    // Step 2: Fetch last 3 months from this account's Gmail
+    // New threads get auto-saved to shared database via save-threads API
+    fetchThreads(null, false);
 
-      // 3. Reload from Upstash again to show any newly saved threads
-      //    This ensures threads from this account appear even if they weren't saved before
-      try {
-        const r2 = await fetch("/api/saved-threads");
-        const data2 = await r2.json();
-        if (data2.threads?.length) {
-          setThreads(data2.threads);
-          setSavedTotal(data2.total || 0);
-        }
-      } catch(e) { console.error("Reload after fetch error:", e); }
-    };
+    // Step 3: After 10 seconds, reload from Upstash to show newly saved threads
+    const reloadTimer = setTimeout(() => {
+      fetch("/api/saved-threads")
+        .then(r => r.json())
+        .then(data => {
+          if (data.threads?.length) {
+            setThreads(data.threads);
+            setSavedTotal(data.total || 0);
+          }
+        })
+        .catch(e => console.error("Delayed reload error:", e));
+    }, 10000);
 
-    init();
+    return () => clearTimeout(reloadTimer);
   }, [session]);
   useEffect(() => {
     if (!session) return;
@@ -692,90 +691,88 @@ export default function Home() {
     finally { setHistLoading(false); }
   }
 
-  // Use a ref to track running state so recursive setTimeout can check it
-  const bulkRunningRef = useRef(false);
+  const bulkStopRef = useRef(false);
 
   async function startBulkImport(token = null) {
-    bulkRunningRef.current = true;
+    bulkStopRef.current = false;
     setBulkRunning(true);
     setBulkDone(false);
 
     let pageToken = token ?? importPageToken ?? null;
-    let totalLoaded = bulkProgress?.loaded || 0;
-    let totalSaved  = bulkProgress?.saved  || 0;
+    let totalLoaded  = bulkProgress?.loaded  || 0;
+    let totalSaved   = bulkProgress?.saved   || 0;
     let totalFetched = bulkProgress?.fetched || 0;
-    let grandTotal  = bulkProgress?.total  || 0;
+    let grandTotal   = bulkProgress?.total   || 0;
 
-    const runBatch = async () => {
-      if (!bulkRunningRef.current) return;
+    while (true) {
+      if (bulkStopRef.current) break;
+
+      let data;
       try {
         const res = await fetch("/api/bulk-import", {
-          method:"POST", headers:{"Content-Type":"application/json"},
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pageToken }),
         });
-        const data = await res.json();
-        if (data.error) {
-          console.error("Bulk import error:", data.error);
-          bulkRunningRef.current = false;
-          setBulkRunning(false);
-          return;
-        }
-
-        totalLoaded  += data.processed || 0;
-        totalSaved   += data.saved     || 0;
-        totalFetched += data.fetched   || 0;
-        grandTotal    = data.totalEstimate || grandTotal;
-
-        // Force immediate re-render with new counts
-        setBulkProgress({ loaded: totalLoaded, saved: totalSaved, fetched: totalFetched, total: grandTotal });
-
-        // Add new threads to dashboard immediately
-        if (data.threads?.length) {
-          setThreads(prev => {
-            const existing = new Set(prev.map(t => t.id));
-            const fresh = data.threads.filter(t => !existing.has(t.id));
-            return fresh.length ? [...prev, ...fresh] : prev;
-          });
-        }
-
-        if (data.nextPageToken && bulkRunningRef.current) {
-          pageToken = data.nextPageToken;
-          setImportPageToken(pageToken);
-          // Save progress to KV
-          fetch("/api/import-progress", {
-            method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ pageToken, processed: totalLoaded, saved: totalSaved, fetched: totalFetched, total: grandTotal }),
-          }).catch(console.error);
-          // Use setTimeout so React can re-render before next batch
-          setTimeout(runBatch, 500);
-        } else {
-          // Done
-          setImportPageToken(null);
-          fetch("/api/import-progress", { method:"DELETE" }).catch(console.error);
-          bulkRunningRef.current = false;
-          setBulkRunning(false);
-          setBulkDone(true);
-          // Reload full dataset from Upstash
-          try {
-            const r2 = await fetch("/api/saved-threads");
-            const d2 = await r2.json();
-            if (d2.threads?.length) { setThreads(d2.threads); setSavedTotal(d2.total || 0); }
-          } catch(e) { console.error("Reload error:", e); }
-        }
+        data = await res.json();
       } catch(e) {
-        console.error("Bulk import batch error:", e);
+        console.error("Bulk import fetch error:", e);
+        // Save progress and stop
         if (pageToken) {
-          fetch("/api/import-progress", {
-            method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ pageToken, processed: totalLoaded, saved: totalSaved, total: grandTotal }),
-          }).catch(console.error);
+          fetch("/api/import-progress", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ pageToken, processed: totalLoaded, saved: totalSaved, total: grandTotal }) }).catch(()=>{});
         }
-        bulkRunningRef.current = false;
-        setBulkRunning(false);
+        break;
       }
-    };
 
-    runBatch();
+      if (data.error) {
+        console.error("Bulk import API error:", data.error);
+        break;
+      }
+
+      totalLoaded  += data.processed || 0;
+      totalSaved   += data.saved     || 0;
+      totalFetched += data.fetched   || 0;
+      grandTotal    = data.totalEstimate || grandTotal;
+
+      // Update progress UI
+      setBulkProgress({ loaded: totalLoaded, saved: totalSaved, fetched: totalFetched, total: grandTotal });
+
+      // Merge new threads into dashboard
+      if (data.threads?.length) {
+        setThreads(prev => {
+          const existing = new Set(prev.map(t => t.id));
+          const fresh = data.threads.filter(t => !existing.has(t.id));
+          return fresh.length ? [...prev, ...fresh] : prev;
+        });
+      }
+
+      if (!data.nextPageToken) {
+        // All done
+        setImportPageToken(null);
+        fetch("/api/import-progress", { method:"DELETE" }).catch(()=>{});
+        setBulkDone(true);
+        // Reload full dataset
+        try {
+          const r2 = await fetch("/api/saved-threads");
+          const d2 = await r2.json();
+          if (d2.threads?.length) { setThreads(d2.threads); setSavedTotal(d2.total || 0); }
+        } catch(e) { console.error("Reload error:", e); }
+        break;
+      }
+
+      // More pages — save progress and continue
+      pageToken = data.nextPageToken;
+      setImportPageToken(pageToken);
+      fetch("/api/import-progress", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ pageToken, processed: totalLoaded, saved: totalSaved, fetched: totalFetched, total: grandTotal }),
+      }).catch(()=>{});
+
+      // Yield to React for re-render before next batch
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    setBulkRunning(false);
   }
 
   // Mark Unrelated — removes from dashboard, Upstash, and Sheet immediately
@@ -1234,7 +1231,7 @@ export default function Home() {
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
             {bulkRunning
-              ? <button className={styles.btn} onClick={()=>{ bulkRunningRef.current = false; setBulkRunning(false); }}>⏸ Pause</button>
+              ? <button className={styles.btn} onClick={()=>{ bulkStopRef.current = true; setBulkRunning(false); }}>⏸ Pause</button>
               : bulkDone
               ? <span style={{fontSize:12,color:"#1D9E75",fontWeight:500}}>✓ Import complete</span>
               : importPageToken
