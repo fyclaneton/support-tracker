@@ -925,7 +925,7 @@ export default function Home() {
       const res = await fetch("/api/reanalyze-failed", { method:"POST" });
       const data = await res.json();
       if (data.ok) {
-        setSpamToast(`✓ Cleared ${data.cleared} failed summaries — reload to re-analyze.`);
+        setSpamToast(`✓ Queued ${data.cleared} threads for AI re-analysis — they'll process on next load.`);
         setTimeout(() => setSpamToast(null), 5000);
         // Reload from Upstash so the cleared threads show up for re-analysis
         setTimeout(() => reloadFromSaved(), 1000);
@@ -1165,8 +1165,9 @@ export default function Home() {
       && (!filterRegion || r.region===filterRegion)
       && (!filterDistributor || r.isDistributor===true)
       && (!filterAccount || 
-          (r.receivedBy ? r.receivedBy === filterAccount : r.fetchedBy === filterAccount) ||
-          (filterAccount === "__untagged__" && !r.receivedBy && !r.fetchedBy));
+          r.receivedBy === filterAccount ||
+          r.fetchedBy === filterAccount ||
+          (!r.receivedBy && !r.fetchedBy && filterAccount === "info@i2rcnc.com"));
   });
 
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
@@ -1222,12 +1223,10 @@ export default function Home() {
             title="Filter by inbox account"
           >
             <option value="">All inboxes</option>
-            {[...new Set(threads.map(t=>t.receivedBy||t.fetchedBy).filter(Boolean))].sort().map(acc=>(
+            <option value="info@i2rcnc.com">info@i2rcnc.com</option>
+            {[...new Set(threads.map(t=>t.receivedBy||t.fetchedBy).filter(Boolean))].filter(acc=>acc!=="info@i2rcnc.com").sort().map(acc=>(
               <option key={acc} value={acc}>{acc}</option>
             ))}
-            {threads.some(t=>!t.receivedBy && !t.fetchedBy) && (
-              <option value="__untagged__">Untagged (run backfill to fix)</option>
-            )}
           </select>
           <a href="/analytics" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>📊 Analytics</a>
           <a href="/distributors" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>🏢 Distributors</a>
@@ -1473,8 +1472,8 @@ export default function Home() {
                 <button className={styles.btn} onClick={reloadFromSaved} disabled={savedLoading} title="Reload all threads from database">
                   {savedLoading ? "Loading…" : "↺ Reload"}
                 </button>
-                <button className={styles.btn} onClick={reanalyzeFailed} title="Re-analyze threads with failed AI summaries">
-                  🔄 Re-analyze failed
+                <button className={styles.btn} onClick={reanalyzeFailed} title="Find threads where AI summary failed and queue them for re-analysis">
+                  🤖 Fix missing summaries
                 </button>
                 {threads.some(t=>!t.fetchedBy) && (
                   <button className={styles.btn} onClick={backfillAccount} title="Tag threads by their To: address">
