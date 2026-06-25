@@ -36,7 +36,7 @@ const TEMPLATES = [
 const CAT_BG = {
   Software: { bg: "#EEEDFE", text: "#534AB7" }, Hardware: { bg: "#FAECE7", text: "#993C1D" },
   Setup: { bg: "#E1F5EE", text: "#0F6E56" }, Connectivity: { bg: "#FBEAF0", text: "#993556" },
-  "Contact request": { bg: "#F1EFE8", text: "#5F5E5A" }, "Unrelated": { bg: "#F9ECEC", text: "#922B21" }, Other: { bg: "#F1EFE8", text: "#5F5E5A" },
+  "Contact request": { bg: "#F1EFE8", text: "#5F5E5A" }, "Warranty/Repair": { bg: "#FEF0EE", text: "#993C1D" }, "Distributor": { bg: "#FEF3E2", text: "#935A00" }, "Unrelated": { bg: "#F9ECEC", text: "#922B21" }, "Sales inquiry": { bg: "#E8F4FD", text: "#1A6B9E" }, Other: { bg: "#F1EFE8", text: "#5F5E5A" },
 };
 const STATUS_COLORS = {
   Open:     { bg: "#FAEEDA", text: "#854F0B" },
@@ -177,8 +177,6 @@ function CustomerHistoryModal({ customer, threads, onClose }) {
 }
 
 // ── Thread Detail Panel ──
-const REGIONS = ["Japan","Korea","Czech Republic","United States","Canada","United Kingdom","Other"];
-const REGION_FLAGS = {"Japan":"🇯🇵","Korea":"🇰🇷","Czech Republic":"🇨🇿","United States":"🇺🇸","Canada":"🇨🇦","United Kingdom":"🇬🇧","Other":"🌍"};
 
 function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, onFlagNotService, onFlagDistributor, distributors, spamSenders, modelSeries, allModels }) {
   const [draft, setDraft]                     = useState(null);
@@ -1103,7 +1101,8 @@ export default function Home() {
       && (!filterCat    || r.category===filterCat)
       && (!filterStatus || r.status===filterStatus)
       && (!filterFlag   || (r.flags||[]).includes(filterFlag))
-      && (!filterModel  || r.machineModel===filterModel);
+      && (!filterModel  || r.machineModel===filterModel)
+      && (!filterRegion || r.region===filterRegion);
   });
 
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
@@ -1503,7 +1502,7 @@ export default function Home() {
                   {expandedId===r.id&&(
                     <tr key={r.id+"-detail"}>
                       <td colSpan={7} style={{padding:"0 12px 14px",background:"var(--bg-secondary)"}}>
-                        <ThreadDetail r={r} overrides={overrides} savingId={savingId} sheetInfo={sheetInfo} threads={threads} session={session} onOverride={setOverride} onBlock={flagSenderAsSpam} onFlagNotService={flagNotOurService} spamSenders={spamSenders} modelSeries={MODEL_SERIES} allModels={MACHINE_MODELS}/>
+                        <ThreadDetail r={r} overrides={overrides} savingId={savingId} sheetInfo={sheetInfo} threads={threads} session={session} onOverride={setOverride} onBlock={flagSenderAsSpam} onFlagNotService={flagNotOurService} onFlagDistributor={openDistributorModal} distributors={distributors} spamSenders={spamSenders} modelSeries={MODEL_SERIES} allModels={MACHINE_MODELS}/>
                       </td>
                     </tr>
                   )}

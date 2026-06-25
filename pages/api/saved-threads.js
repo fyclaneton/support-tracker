@@ -1,12 +1,11 @@
-
-
-export const config = { maxDuration: 30 };
-// GET /api/saved-threads
-// Returns all threads saved in Upstash KV
-
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { kvGet, kvKeys } from "../../lib/kv";
+
+export const config = { maxDuration: 30 };
+
+// GET /api/saved-threads
+// Returns all threads saved in Upstash KV
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).end();

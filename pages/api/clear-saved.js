@@ -1,12 +1,11 @@
-
-
-export const config = { maxDuration: 30 };
-// POST /api/clear-saved
-// Clears all saved thread data from Upstash so bulk import can start fresh
-
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { kvGet, kvDel, kvSet, kvKeys } from "../../lib/kv";
+
+export const config = { maxDuration: 30 };
+
+// POST /api/clear-saved
+// Clears all saved thread data from Upstash so bulk import can start fresh
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();

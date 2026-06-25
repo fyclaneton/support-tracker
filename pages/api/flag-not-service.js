@@ -1,14 +1,13 @@
-
-
-export const config = { maxDuration: 30 };
-// POST /api/flag-not-service { threadId, action }
-// action: "mark"   — marks as Unrelated in KV (keeps it, just re-categorizes)
-// action: "remove" — fully removes from KV index + thread store + Sheet
-
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { kvGet, kvSet, kvDel } from "../../lib/kv";
 import { google } from "googleapis";
+
+export const config = { maxDuration: 30 };
+
+// POST /api/flag-not-service { threadId, action }
+// action: "mark"   — marks as Unrelated in KV (keeps it, just re-categorizes)
+// action: "remove" — fully removes from KV index + thread store + Sheet
 
 async function removeFromSheet(threadId, accessToken) {
   try {

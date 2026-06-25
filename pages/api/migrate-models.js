@@ -1,13 +1,12 @@
-
-
-export const config = { maxDuration: 60 };
-// POST /api/migrate-models
-// One-time migration: fixes old model tags (i2R 4/6/8) to new format (B.22/B.23/B.24)
-// Safe to run multiple times — only updates threads that need it
-
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "./auth/[...nextauth]";
 import { kvGet, kvSet } from "../../lib/kv";
+
+export const config = { maxDuration: 60 };
+
+// POST /api/migrate-models
+// One-time migration: fixes old model tags (i2R 4/6/8) to new format (B.22/B.23/B.24)
+// Safe to run multiple times — only updates threads that need it
 
 const MODEL_MIGRATIONS = {
   // Old tag → New display
