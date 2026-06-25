@@ -819,6 +819,7 @@ export default function Home() {
   }
 
   const bulkStopRef = useRef(false);
+  const [bulkError, setBulkError] = useState(null);
 
   async function startBulkImport(token = null) {
     bulkStopRef.current = false;
@@ -836,15 +837,24 @@ export default function Home() {
 
       let data;
       try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 55000); // 55s timeout
         const res = await fetch("/api/bulk-import", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pageToken }),
+          signal: controller.signal,
         });
+        clearTimeout(timeout);
         data = await res.json();
       } catch(e) {
+        if (e.name === "AbortError") {
+          console.warn("Bulk import batch timed out, retrying...");
+          await new Promise(r => setTimeout(r, 2000));
+          continue; // retry this page
+        }
         console.error("Bulk import fetch error:", e);
-        // Save progress and stop
+        setBulkError(`Network error: ${e.message}`);
         if (pageToken) {
           fetch("/api/import-progress", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ pageToken, processed: totalLoaded, saved: totalSaved, total: grandTotal }) }).catch(()=>{});
         }
@@ -853,8 +863,14 @@ export default function Home() {
 
       if (data.error) {
         console.error("Bulk import API error:", data.error);
-        break;
+        setBulkError(data.error);
+        // Try to continue if we have a pageToken — might be a transient error
+        if (!pageToken) break;
+        // Wait and retry once
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
       }
+      setBulkError(null);
 
       totalLoaded  += data.processed || 0;
       totalSaved   += data.saved     || 0;
@@ -1415,6 +1431,7 @@ export default function Home() {
               </span>
             )}
             {bulkRunning && <span className={styles.aiPill} style={{fontSize:11}}>🤖 Importing &amp; analyzing…</span>}
+            {bulkError && <span style={{fontSize:11,color:"#C0392B",background:"#FEF0EE",padding:"2px 8px",borderRadius:20}}>⚠️ {bulkError}</span>}
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
             {bulkRunning

@@ -177,26 +177,40 @@ export default async function handler(req, res) {
     const savedIds = await getSavedIds();
 
     // List threads — use metadata format first (fast) to pre-filter
-    // Try with category filter first (cleaner for tabbed inbox accounts)
+    // Try category:primary first (filters promotions/spam at Gmail level)
+    // Fall back to plain query if category returns 0 (account without tabbed inbox)
     const categoryQuery = `in:anywhere -in:spam -in:trash -in:draft (category:primary OR category:forums) -category:promotions -category:updates -category:social after:${dateStr}`;
-    const plainQuery = `in:anywhere -in:spam -in:trash -in:draft after:${dateStr}`;
+    const plainQuery    = `in:anywhere -in:spam -in:trash -in:draft after:${dateStr}`;
 
-    let listRes = await gmail.users.threads.list({
-      userId: "me",
-      q: pageToken ? plainQuery : categoryQuery,
-      maxResults: 15,
-      pageToken: pageToken || undefined,
-      fields: "threads/id,nextPageToken,resultCountEstimate",
-    });
-
-    // Fall back to plain query if category returns nothing (account without tabbed inbox)
-    if (!pageToken && (!listRes.data.threads || listRes.data.threads.length === 0)) {
+    // If we have a pageToken, the query is embedded in it — use plain to be safe
+    // If no pageToken, try category first
+    let listRes;
+    if (pageToken) {
+      // Continue with plain query + pageToken (Gmail pageTokens are query-specific)
       listRes = await gmail.users.threads.list({
         userId: "me",
         q: plainQuery,
         maxResults: 15,
+        pageToken,
         fields: "threads/id,nextPageToken,resultCountEstimate",
       });
+    } else {
+      // First page — try category filter
+      listRes = await gmail.users.threads.list({
+        userId: "me",
+        q: categoryQuery,
+        maxResults: 15,
+        fields: "threads/id,nextPageToken,resultCountEstimate",
+      });
+      // If category returns nothing, fall back to plain query
+      if (!listRes.data.threads || listRes.data.threads.length === 0) {
+        listRes = await gmail.users.threads.list({
+          userId: "me",
+          q: plainQuery,
+          maxResults: 15,
+          fields: "threads/id,nextPageToken,resultCountEstimate",
+        });
+      }
     }
 
     const threads = listRes.data.threads || [];
