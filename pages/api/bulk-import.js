@@ -272,6 +272,7 @@ export default async function handler(req, res) {
 
         processed.push({
           id: t.id,
+          fetchedBy: session.user?.email || null,
           date: extractDate(messages),
           customer,
           customerEmail: extractCustomerEmail(messages),

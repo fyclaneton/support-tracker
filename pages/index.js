@@ -24,14 +24,6 @@ const FLAG_LABELS = {
   repeat:     { label: "Repeat",   emoji: "🔁" },
 };
 
-const TEMPLATES = [
-  { label: "UCCNC Soft Limit Fix", text: "Hi,\n\nThank you for reaching out. To resolve the soft limit issue in UCCNC:\n1. Open UCCNC and go to Settings → Axes\n2. Increase the soft limit values or disable them temporarily\n3. Home your machine and try running the program again\n\nPlease let us know if this resolves the issue." },
-  { label: "Connectivity Checklist", text: "Hi,\n\nThank you for contacting us. Please try the following steps to resolve the connectivity issue:\n1. Check that the USB cable is firmly connected at both ends\n2. Try a different USB port on your computer\n3. Restart both the controller and your computer\n4. Reinstall the UCCNC driver from our website\n\nLet us know how it goes!" },
-  { label: "Schedule a Call", text: "Hi,\n\nThank you for getting in touch. We'd be happy to assist you over a call. Please reply with your availability and we'll get back to you to schedule a time.\n\nAlternatively, you can reach us at our support line during business hours." },
-  { label: "Request More Info", text: "Hi,\n\nThank you for reaching out. To help you more effectively, could you please provide:\n1. Your machine model (i2R-4, i2R-8, etc.)\n2. A description of the issue\n3. Any error messages you're seeing\n4. Screenshots if possible\n\nWe look forward to helping you resolve this!" },
-  { label: "Issue Resolved Confirmation", text: "Hi,\n\nWe're glad to hear the issue has been resolved! If you experience any further problems or have any questions, please don't hesitate to reach out.\n\nThank you for choosing i2R CNC!" },
-  { label: "X-Axis / Y-Axis Issue", text: "Hi,\n\nThank you for reporting this. For axis issues, please try:\n1. Check all motor cable connections\n2. Verify the steps/mm setting in UCCNC matches your machine spec\n3. Test the axis movement at slow speed first\n4. Check for any mechanical obstructions along the axis\n\nPlease let us know the results and we'll assist further." },
-];
 
 const CAT_BG = {
   Software: { bg: "#EEEDFE", text: "#534AB7" }, Hardware: { bg: "#FAECE7", text: "#993C1D" },
@@ -232,8 +224,7 @@ function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onO
   const [notes, setNotes] = useState([]);
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
-  const [showTemplates, setShowTemplates] = useState(false);
-  const [copiedTemplate, setCopiedTemplate] = useState(null);
+
 
   useEffect(() => {
     fetch(`/api/notes?threadId=${r.id}`)
@@ -262,11 +253,6 @@ function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onO
     } catch(e) { console.error(e); }
   }
 
-  function copyTemplate(template) {
-    navigator.clipboard.writeText(template.text).catch(() => {});
-    setCopiedTemplate(template.label);
-    setTimeout(() => { setCopiedTemplate(null); setShowTemplates(false); }, 1500);
-  }
 
   return (
     <div className={styles.detailPanel}>
@@ -334,18 +320,26 @@ function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onO
         </div>
       </div>
 
-      {/* Response templates */}
-      <div style={{ marginTop: 12 }}>
-        <button className={styles.templateToggle} onClick={() => setShowTemplates(v => !v)}>
-          📋 {showTemplates ? "Hide" : "Show"} response templates
-        </button>
-        {showTemplates && (
-          <div className={styles.templateGrid}>
-            {TEMPLATES.map(t => (
-              <button key={t.label} className={styles.templateBtn} onClick={() => copyTemplate(t)}>
-                {copiedTemplate === t.label ? "✓ Copied!" : t.label}
-              </button>
-            ))}
+      {/* AI Draft Reply */}
+      <div className={styles.notesSection}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <p className={styles.detailLabel}>✍️ AI draft reply</p>
+          <button className={styles.btn} style={{fontSize:12,padding:"4px 12px"}} onClick={generateDraft} disabled={draftLoading}>
+            {draftLoading ? "Generating…" : draft ? "Regenerate" : "✨ Generate draft"}
+          </button>
+        </div>
+        {draftLoading && <p style={{fontSize:12,color:"var(--text-secondary)"}}>🤖 Searching knowledge base &amp; drafting reply…</p>}
+        {draft && (
+          <div>
+            {draftKbUsed > 0 && <p style={{fontSize:11,color:"#1D9E75",marginBottom:6}}>📚 Based on {draftKbUsed} similar past resolution{draftKbUsed>1?"s":""} from knowledge base</p>}
+            <textarea
+              style={{width:"100%",minHeight:160,padding:"10px 12px",fontSize:13,lineHeight:1.6,border:"0.5px solid var(--border)",borderRadius:8,background:"var(--bg-secondary)",color:"var(--text-primary)",resize:"vertical",fontFamily:"inherit",boxSizing:"border-box"}}
+              value={draft}
+              onChange={e=>setDraft(e.target.value)}
+            />
+            <button className={styles.btn} style={{marginTop:6,fontSize:12}} onClick={copyDraft}>
+              {copied ? "✓ Copied!" : "Copy to clipboard"}
+            </button>
           </div>
         )}
       </div>
@@ -495,6 +489,7 @@ export default function Home() {
   const [filterFlag, setFilterFlag]       = useState("");
   const [filterRegion, setFilterRegion]   = useState("");
   const [filterDistributor, setFilterDistributor] = useState(false);
+  const [i2rOnly, setI2rOnly]                   = useState(false);
   const [filterModel, setFilterModel]     = useState("");
   const [page, setPage]                   = useState(0);
   const [expandedId, setExpandedId]       = useState(null);
@@ -516,13 +511,11 @@ export default function Home() {
   const [newRuleValue, setNewRuleValue]   = useState("");
   const [savingRule, setSavingRule]       = useState(false);
   const [customerHistory, setCustomerHistory] = useState(null);
-  const [histPageToken, setHistPageToken]     = useState(null);
   const [bulkRunning, setBulkRunning]         = useState(false);
   const [bulkProgress, setBulkProgress]       = useState(null); // { loaded, total, saved }
   const [bulkDone, setBulkDone]               = useState(false);
   const [importPageToken, setImportPageToken] = useState(null); // persisted across sessions
   const [migrationDone, setMigrationDone]     = useState(false);
-  const [isNewAccount, setIsNewAccount]       = useState(false);
   const [distributors, setDistributors]       = useState([]);
   const [showDistModal, setShowDistModal]     = useState(false);
   const [distThread, setDistThread]           = useState(null); // thread being flagged
@@ -531,11 +524,6 @@ export default function Home() {
   const [bulkUpdating, setBulkUpdating]       = useState(false);
   const [savedLoading, setSavedLoading]       = useState(false);
   const [savedTotal, setSavedTotal]           = useState(0);
-  const [histTotal, setHistTotal]             = useState(null);
-  const [histLoading, setHistLoading]         = useState(false);
-  const [histAnalyzing, setHistAnalyzing]     = useState(false);
-  const [showHistorical, setShowHistorical]   = useState(false);
-  const [historicalIds, setHistoricalIds]     = useState(new Set());
   const syncTimer = useRef(null);
   const PAGE_SIZE = 10;
 
@@ -764,63 +752,6 @@ export default function Home() {
       if (data.url) setSheetInfo({ exists:true, url:data.url, spreadsheetId:data.spreadsheetId, createdBy: session.user?.email });
     } catch(e) { setSheetError("Failed to create sheet. Make sure Google Sheets & Drive APIs are enabled."); }
     finally { setSheetCreating(false); }
-  }
-
-  async function loadHistorical() {
-    setHistLoading(true);
-    try {
-      const allIds = [...new Set([...threads.map(t => t.id), ...historicalIds])];
-      const res = await fetch("/api/history", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pageToken: histPageToken, existingIds: allIds }),
-      });
-      const data = await res.json();
-      if (data.error) { console.error(data.error); return; }
-
-      const newThreads = data.threads || [];
-      setHistTotal(data.totalEstimate || null);
-      setHistPageToken(data.nextPageToken || null);
-
-      if (!newThreads.length) return;
-
-      // AI analyze the historical batch
-      setHistAnalyzing(true);
-      try {
-        const analyzeRes = await fetch("/api/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ threads: newThreads }),
-        });
-        const analyzeData = await analyzeRes.json();
-        const map = {};
-        (analyzeData.results || []).forEach(r => { map[r.id] = r; });
-        const analyzed = newThreads
-          .filter(t => !map[t.id]?.isSpam)
-          .map(t => ({ ...t, ...map[t.id], machineModel: map[t.id]?.machineModel || t.machineModel || null }));
-
-        // Auto-save historical passing threads too
-        if (analyzed.length > 0) {
-          fetch("/api/save-threads", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ threads: analyzed }),
-          }).catch(e => console.error("Historical auto-save error:", e));
-        }
-
-        setThreads(prev => {
-          const existing = new Set(prev.map(t => t.id));
-          const fresh = analyzed.filter(t => !existing.has(t.id));
-          return [...prev, ...fresh];
-        });
-        setHistoricalIds(prev => {
-          const next = new Set(prev);
-          newThreads.forEach(t => next.add(t.id));
-          return next;
-        });
-      } finally { setHistAnalyzing(false); }
-    } catch(e) { console.error("History load error:", e); }
-    finally { setHistLoading(false); }
   }
 
   const bulkStopRef = useRef(false);
@@ -1201,7 +1132,8 @@ export default function Home() {
       && (!filterFlag   || (r.flags||[]).includes(filterFlag))
       && (!filterModel  || r.machineModel===filterModel)
       && (!filterRegion || r.region===filterRegion)
-      && (!filterDistributor || r.isDistributor===true);
+      && (!filterDistributor || r.isDistributor===true)
+      && (!i2rOnly || (r.fetchedBy||"").includes("i2rcnc"));
   });
 
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
@@ -1249,6 +1181,19 @@ export default function Home() {
         </div>
         <div className={styles.headerRight}>
           {spamSenders.length>0 && <button className={styles.spamListBtn} onClick={()=>setShowSpamList(v=>!v)}>🚫 {spamSenders.length} blocked</button>}
+          <button
+            onClick={()=>setI2rOnly(v=>!v)}
+            style={{fontSize:12,padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6,cursor:"pointer",
+              background: i2rOnly ? "#E1F5EE" : "var(--bg)",
+              color: i2rOnly ? "#0F6E56" : "var(--text-secondary)",
+              borderColor: i2rOnly ? "#0F6E56" : "var(--border)",
+              fontWeight: i2rOnly ? 500 : 400,
+            }}
+            title={i2rOnly ? "Showing i2R CNC emails only" : "Click to show only info@i2rcnc.com emails"}
+          >
+            {i2rOnly ? "✓ i2R only" : "i2R only"}
+          </button>
+          <a href="/analytics" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>📊 Analytics</a>
           <a href="/distributors" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>🏢 Distributors</a>
           <a href="/knowledge" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}} title="Knowledge Base">📚 KB</a>
           <button className={styles.spamListBtn} onClick={()=>setShowFilters(v=>!v)}>⚙️ Filters {filterRules.length>0?`(${filterRules.length})`:""}</button>
@@ -1429,9 +1374,9 @@ export default function Home() {
 
         {/* Export bar */}
         <div className={styles.exportBar}>
-          <span style={{fontSize:13,color:"var(--text-secondary)"}}>Export {allRows.length} threads:</span>
-          <button className={styles.btn} onClick={()=>exportCSV(allRows)}>↓ CSV</button>
-          <button className={styles.btn} onClick={()=>generatePDF(allRows)}>↓ PDF</button>
+          <span style={{fontSize:13,color:"var(--text-secondary)"}}>Export {filtered.length} threads:</span>
+          <button className={styles.btn} onClick={()=>exportCSV(filtered)}>↓ CSV</button>
+          <button className={styles.btn} onClick={()=>generatePDF(filtered)}>↓ PDF</button>
           {nextPageToken&&<button className={styles.btn} onClick={()=>fetchThreads(nextPageToken)} disabled={loading} style={{marginLeft:"auto"}}>{loading?"Loading…":"Load more emails"}</button>}
         </div>
 
