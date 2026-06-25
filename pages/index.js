@@ -1133,7 +1133,7 @@ export default function Home() {
       && (!filterModel  || r.machineModel===filterModel)
       && (!filterRegion || r.region===filterRegion)
       && (!filterDistributor || r.isDistributor===true)
-      && (!i2rOnly || (r.fetchedBy||"").includes("i2rcnc"));
+      && (!i2rOnly || !r.fetchedBy || (r.fetchedBy||"").includes("i2rcnc"));
   });
 
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
