@@ -177,11 +177,39 @@ function CustomerHistoryModal({ customer, threads, onClose }) {
 }
 
 // ── Thread Detail Panel ──
-function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, onFlagNotService, spamSenders, modelSeries, allModels }) {
-  const [draft, setDraft]           = useState(null);
-  const [draftLoading, setDraftLoading] = useState(false);
-  const [draftKbUsed, setDraftKbUsed]  = useState(0);
-  const [copied, setCopied]         = useState(false);
+const REGIONS = ["Japan","Korea","Czech Republic","United States","Canada","United Kingdom","Other"];
+const REGION_FLAGS = {"Japan":"🇯🇵","Korea":"🇰🇷","Czech Republic":"🇨🇿","United States":"🇺🇸","Canada":"🇨🇦","United Kingdom":"🇬🇧","Other":"🌍"};
+
+function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, onFlagNotService, onFlagDistributor, distributors, spamSenders, modelSeries, allModels }) {
+  const [draft, setDraft]                     = useState(null);
+  const [draftLoading, setDraftLoading]       = useState(false);
+  const [draftKbUsed, setDraftKbUsed]         = useState(0);
+  const [copied, setCopied]                   = useState(false);
+  const [region, setRegion]                   = useState(r.region || null);
+  const [detectingRegion, setDetectingRegion] = useState(false);
+
+  async function detectRegion() {
+    setDetectingRegion(true);
+    try {
+      const res = await fetch("/api/region-detect", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ threadId:r.id, content:r.content||r.snippet||"", customer:r.customer||"", subject:r.subject||"", customerEmail:r.customerEmail||"" }),
+      });
+      const data = await res.json();
+      if (data.region) setRegion(data.region);
+    } catch(e) { console.error(e); }
+    finally { setDetectingRegion(false); }
+  }
+
+  async function saveRegion(val) {
+    setRegion(val);
+    try {
+      await fetch("/api/region-detect", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ threadId:r.id, region:val }),
+      });
+    } catch(e) { console.error(e); }
+  }
 
   async function generateDraft() {
     setDraftLoading(true);
