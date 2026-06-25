@@ -37,10 +37,10 @@ async function analyzeBatch(threads) {
   // Build thread list safely
   const threadList = threads.map(t => {
     const id = sanitize(t.id, 50);
-    const from = sanitize(t.customer, 80);
-    const email = t.customerEmail ? `<${sanitize(t.customerEmail, 80)}>` : "";
-    const subject = sanitize(t.subject, 150);
-    const content = sanitize(t.content || t.snippet, 300);
+    const from = sanitize(t.customer, 60);
+    const email = t.customerEmail ? `<${sanitize(t.customerEmail, 60)}>` : "";
+    const subject = sanitize(t.subject, 100);
+    const content = sanitize(t.content || t.snippet, 200);
     return `ID: ${id}\nFrom: ${from} ${email}\nSubject: ${subject}\nContent: ${content}\nHas reply: ${t.hasSent}`;
   }).join("\n---\n");
 
@@ -64,7 +64,7 @@ ${threadList}
 
 Return ONLY a valid JSON array, no markdown fences.`;
 
-  const maxTokens = Math.max(256, 200 * threads.length);
+  const maxTokens = Math.max(200, 120 * threads.length);
 
   // Build request body and validate it serializes cleanly
   const requestBody = {

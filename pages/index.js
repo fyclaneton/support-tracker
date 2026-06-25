@@ -567,9 +567,16 @@ export default function Home() {
 
   const analyzeThreads = useCallback(async (rawThreads) => {
     if (!rawThreads.length) return rawThreads;
+
+    // Skip threads that already have AI summaries — no tokens needed
+    const needsAnalysis = rawThreads.filter(t => !t.summary || t.summary === "Summary unavailable.");
+    const alreadyDone = rawThreads.filter(t => t.summary && t.summary !== "Summary unavailable.");
+
+    if (!needsAnalysis.length) return alreadyDone;
+
     setAnalyzing(true);
     try {
-      const res = await fetch("/api/analyze", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ threads: rawThreads }) });
+      const res = await fetch("/api/analyze", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ threads: needsAnalysis }) });
       const data = await res.json();
       const map = {};
       (data.results||[]).forEach(r=>{ map[r.id]=r; });
@@ -600,7 +607,7 @@ export default function Home() {
         }).catch(e => console.error("Auto-save error:", e));
       }
 
-      return passing;
+      return [...alreadyDone, ...passing];
     } catch(e) { console.error(e); return rawThreads; }
     finally { setAnalyzing(false); }
   }, []);
