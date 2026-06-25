@@ -1044,43 +1044,51 @@ export default function Home() {
     if (!selectedIds.size) return;
     setBulkUpdating(true);
     const ids = [...selectedIds];
-    try {
-      for (const id of ids) {
+
+    // 1. Update all local UI immediately
+    setOverrides(prev => {
+      const next = { ...prev };
+      ids.forEach(id => {
         const thread = threads.find(t => t.id === id);
-        const currentFlags = thread?.flags || [];
-        const extraUpdates = status === "Resolved" && currentFlags.includes("no-reply")
-          ? { flags: currentFlags.filter(f => f !== "no-reply") }
-          : {};
+        const flags = status === "Resolved"
+          ? (thread?.flags||[]).filter(f => f !== "no-reply")
+          : (thread?.flags||[]);
+        next[id] = { ...next[id], status, flags, updatedAt: new Date().toISOString(), updatedBy: session.user?.email };
+      });
+      return next;
+    });
+    if (status === "Resolved") {
+      setThreads(prev => prev.map(t =>
+        selectedIds.has(t.id) ? { ...t, flags: (t.flags||[]).filter(f => f !== "no-reply") } : t
+      ));
+    }
 
-        // Update local state
-        setOverrides(prev => ({ ...prev, [id]: { ...prev[id], status, ...extraUpdates, updatedAt: new Date().toISOString(), updatedBy: session.user?.email } }));
-        if (extraUpdates.flags) {
-          setThreads(prev => prev.map(t => t.id === id ? { ...t, flags: extraUpdates.flags } : t));
-        }
-
-        // Save to Upstash
-        await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field:"status", value: status, ...extraUpdates }) });
-        await fetch("/api/update-thread", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, updates: { status, ...extraUpdates } }) });
-
-        // Auto-add to KB if marking Resolved
-        if (status === "Resolved") {
+    // 2. Save in parallel batches of 5
+    try {
+      const BATCH = 5;
+      for (let i = 0; i < ids.length; i += BATCH) {
+        const batch = ids.slice(i, i + BATCH);
+        await Promise.all(batch.map(async id => {
           const thread = threads.find(t => t.id === id);
-          if (thread?.summary && thread?.resolution && thread.resolution !== "Unresolved — no reply sent yet.") {
-            fetch("/api/knowledge", {
-              method:"POST", headers:{"Content-Type":"application/json"},
-              body: JSON.stringify({ threadId: id, problem: thread.summary, solution: thread.resolution, category: overrides[id]?.category || thread.category, machineModel: overrides[id]?.machineModel || thread.machineModel, customer: thread.customer, date: thread.date }),
-            }).catch(() => {});
-          }
-        }
-
-        // Small delay to avoid rate limiting
-        await new Promise(r => setTimeout(r, 100));
+          const flags = status === "Resolved" ? (thread?.flags||[]).filter(f=>f!=="no-reply") : (thread?.flags||[]);
+          try {
+            await fetch("/api/overrides", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, field:"status", value:status, flags }) });
+            fetch("/api/update-thread", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ id, updates:{ status, flags } }) }).catch(()=>{});
+            if (status==="Resolved" && thread?.summary && thread?.resolution && !thread.resolution.includes("Unresolved")) {
+              fetch("/api/knowledge", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ threadId:id, problem:thread.summary, solution:thread.resolution, category:thread.category, machineModel:thread.machineModel, customer:thread.customer, date:thread.date }) }).catch(()=>{});
+            }
+          } catch(e) { console.error("Save error", id, e); }
+        }));
+        if (i + BATCH < ids.length) await new Promise(r => setTimeout(r, 300));
       }
       setSelectedIds(new Set());
-      setSpamToast(`✓ ${ids.length} thread${ids.length > 1 ? "s" : ""} marked as ${status}.`);
+      setSpamToast(`✓ ${ids.length} thread${ids.length>1?"s":""} marked as ${status}.`);
       setTimeout(() => setSpamToast(null), 3000);
-    } catch(e) { console.error("Bulk update error:", e); }
-    finally { setBulkUpdating(false); }
+    } catch(e) {
+      console.error("Bulk update error:", e);
+    } finally {
+      setBulkUpdating(false);
+    }
   }
 
   // Tag distributor — opens modal to enter company name
@@ -1499,40 +1507,42 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Bulk action bar — shows when threads are selected */}
-        {selectedIds.size > 0 ? (
+        {/* Bulk action bar — shows when any threads are selected */}
+        {selectedIds.size > 0 && (
           <div className={styles.bulkBar}>
-            <span style={{fontSize:13,fontWeight:500}}>{selectedIds.size} thread{selectedIds.size>1?"s":""} selected</span>
-            {filtered.length > pageRows.length && selectedIds.size === pageRows.length && (
-              <button className={styles.btn} style={{fontSize:12}} onClick={selectAllFiltered}>
-                Select all {filtered.length} filtered threads
-              </button>
-            )}
-            <div style={{display:"flex",gap:6,marginLeft:"auto"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",flex:1}}>
+              <span style={{fontSize:13,fontWeight:500}}>
+                {selectedIds.size} of {filtered.length} selected
+              </span>
+              {selectedIds.size < filtered.length && (
+                <button className={styles.btn} style={{fontSize:12}} onClick={selectAllFiltered}>
+                  Select all {filtered.length}
+                </button>
+              )}
+              {bulkUpdating && <span style={{fontSize:12,color:"var(--text-secondary)"}}>💾 Saving…</span>}
+            </div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               <button className={styles.btn} style={{background:"#EAF3DE",color:"#3B6D11",borderColor:"#3B6D11"}} onClick={()=>bulkSetStatus("Resolved")} disabled={bulkUpdating}>
-                {bulkUpdating?"Saving…":"✓ Mark Resolved"}
+                ✓ Resolved
               </button>
               <button className={styles.btn} style={{background:"#E6F1FB",color:"#185FA5",borderColor:"#185FA5"}} onClick={()=>bulkSetStatus("Pending")} disabled={bulkUpdating}>
-                Mark Pending
+                Pending
               </button>
               <button className={styles.btn} style={{background:"#FAEEDA",color:"#854F0B",borderColor:"#854F0B"}} onClick={()=>bulkSetStatus("Open")} disabled={bulkUpdating}>
-                Mark Open
+                Open
               </button>
-              <button className={styles.btn} onClick={()=>setSelectedIds(new Set())}>✕ Deselect</button>
               <button className={styles.btn} style={{background:"#F9ECEC",color:"#922B21",borderColor:"#922B21"}} disabled={bulkUpdating}
                 onClick={async()=>{
                   const ids=[...selectedIds];
-                  for(const id of ids){
-                    const t=allRows.find(r=>r.id===id);
-                    if(t) await markAsJunk(t);
-                  }
+                  for(const id of ids){const t=allRows.find(r=>r.id===id);if(t) await markAsJunk(t);}
                   setSelectedIds(new Set());
                 }}>
-                🗑 Mark all junk
+                🗑 Junk
               </button>
+              <button className={styles.btn} onClick={()=>setSelectedIds(new Set())}>✕ Clear</button>
             </div>
           </div>
-        ) : null}
+        )}
 
         {/* Table */}
         <div className={styles.tableWrap}>
