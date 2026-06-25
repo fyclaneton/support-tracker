@@ -1150,7 +1150,7 @@ export default function Home() {
       && (!filterModel  || r.machineModel===filterModel)
       && (!filterRegion || r.region===filterRegion)
       && (!filterDistributor || r.isDistributor===true)
-      && (!filterAccount || r.fetchedBy === filterAccount || (!r.fetchedBy && filterAccount === "i2rcnc"));
+      && (!filterAccount || r.fetchedBy === filterAccount || (filterAccount === "__untagged__" && !r.fetchedBy));
   });
 
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
@@ -1209,7 +1209,9 @@ export default function Home() {
             {[...new Set(threads.map(t=>t.fetchedBy).filter(Boolean))].sort().map(acc=>(
               <option key={acc} value={acc}>{acc}</option>
             ))}
-            {threads.some(t=>!t.fetchedBy) && <option value="i2rcnc">info@i2rcnc.com (legacy)</option>}
+            {threads.some(t=>!t.fetchedBy) && (
+              <option value="__untagged__">Untagged (pre-account tracking)</option>
+            )}
           </select>
           <a href="/analytics" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>📊 Analytics</a>
           <a href="/distributors" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>🏢 Distributors</a>
