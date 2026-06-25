@@ -353,30 +353,69 @@ function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onO
       {/* Controls row */}
       <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginTop: 14 }}>
         <div>
-          <p className={styles.detailLabel} style={{ marginBottom: 4 }}>Override category</p>
+          <p className={styles.detailLabel} style={{ marginBottom: 4 }}>Category</p>
           <select className={styles.select} value={r.category || "Other"} onChange={e => onOverride(r.id, "category", e.target.value)}>
             {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
         <div>
-          <p className={styles.detailLabel} style={{ marginBottom: 4 }}>Override model</p>
+          <p className={styles.detailLabel} style={{ marginBottom: 4 }}>Machine model</p>
           <select className={styles.select} value={r.machineModel || ""} onChange={e => onOverride(r.id, "machineModel", e.target.value)}>
             <option value="">Unknown</option>
-            {MACHINE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
+            {(modelSeries||[]).map(series => {
+              const ms = (allModels||[]).filter(m => m.startsWith(series+".") || m.startsWith(series+"+"));
+              return ms.length > 0 ? (
+                <optgroup key={series} label={`${series} Series`}>
+                  {ms.map(m => <option key={m} value={m}>{MODEL_ALIASES[m] ? `${m} (${MODEL_ALIASES[m]})` : m}</option>)}
+                </optgroup>
+              ) : null;
+            })}
           </select>
         </div>
         <div>
-          <p className={styles.detailLabel} style={{ marginBottom: 4 }}>Mark as</p>
+          <p className={styles.detailLabel} style={{ marginBottom: 4 }}>Status</p>
           <select className={styles.select} value={r.status || "Open"} onChange={e => onOverride(r.id, "status", e.target.value)}>
             {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
+        <div>
+          <p className={styles.detailLabel} style={{ marginBottom: 4 }}>Region</p>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            <select className={styles.select} value={region||""} onChange={e=>saveRegion(e.target.value)}>
+              <option value="">Unknown</option>
+              {REGIONS.map(reg=><option key={reg} value={reg}>{REGION_FLAGS[reg]} {reg}</option>)}
+            </select>
+            {!region && (
+              <button className={styles.btn} style={{fontSize:11,padding:"5px 8px"}} onClick={detectRegion} disabled={detectingRegion} title="Auto-detect region">
+                {detectingRegion ? "…" : "🤖"}
+              </button>
+            )}
+          </div>
+        </div>
         <div style={{ paddingBottom: 2 }}>
-          <p className={styles.detailLabel} style={{ marginBottom: 4 }}>Sender</p>
-          <button className={styles.spamBtn} onClick={e => { e.stopPropagation(); onBlock(r.customer); }}
-            disabled={Array.isArray(spamSenders) && spamSenders.includes(r.customer) || r.customer === "Unknown"}>
-            🚫 {Array.isArray(spamSenders) && spamSenders.includes(r.customer) ? "Blocked" : "Block sender"}
-          </button>
+          <p className={styles.detailLabel} style={{ marginBottom: 4 }}>Actions</p>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <button className={styles.spamBtn} onClick={e => { e.stopPropagation(); onBlock(r.customer); }}
+              disabled={Array.isArray(spamSenders) && spamSenders.includes(r.customer) || r.customer === "Unknown"}>
+              🚫 {Array.isArray(spamSenders) && spamSenders.includes(r.customer) ? "Blocked" : "Block"}
+            </button>
+            {Array.isArray(distributors) && distributors.some(d => d.email.toLowerCase() === (r.customerEmail||"").toLowerCase()) ? (
+              <span style={{fontSize:12,background:"#FEF3E2",color:"#935A00",padding:"5px 10px",borderRadius:8,fontWeight:500}}>
+                🏢 {distributors.find(d=>d.email.toLowerCase()===(r.customerEmail||"").toLowerCase())?.company||"Distributor"}
+              </span>
+            ) : (
+              <button className={styles.notServiceBtn} style={{background:"#FEF3E2",color:"#935A00",borderColor:"#935A00"}}
+                onClick={e=>{e.stopPropagation(); onFlagDistributor && onFlagDistributor(r);}}
+                title="Flag as distributor/OEM partner">
+                🏢 Distributor
+              </button>
+            )}
+            <button className={styles.notServiceBtn}
+              onClick={e=>{e.stopPropagation(); onFlagNotService(r.id);}}
+              title="Remove — not relevant to our services">
+              ✕ Unrelated
+            </button>
+          </div>
         </div>
         {savingId === r.id && <span style={{ fontSize: 12, color: "var(--text-secondary)", paddingBottom: 8 }}>💾 Saving…</span>}
         {savingId !== r.id && overrides[r.id] && <span style={{ fontSize: 12, color: "#1D9E75", paddingBottom: 8 }}>✓ Saved{sheetInfo?.exists ? " & synced" : ""}</span>}
@@ -1502,19 +1541,10 @@ export default function Home() {
                     <td>
                       <div style={{display:"flex",flexDirection:"column",gap:3}}>
                         {r.machineModel ? <ModelTag model={r.machineModel}/> : <span style={{color:"var(--text-secondary)",fontSize:12}}>—</span>}
-                        {r.distributorCompany && <span style={{fontSize:10,background:"#FEF3E2",color:"#935A00",padding:"1px 6px",borderRadius:20,fontWeight:500}}>🏢 {r.distributorCompany}</span>}
+                        {r.isDistributor && <span style={{fontSize:10,background:"#FEF3E2",color:"#935A00",padding:"1px 7px",borderRadius:20,fontWeight:500,whiteSpace:"nowrap"}}>🏢 {r.distributorCompany||"Partner"}</span>}
                       </div>
                     </td>
-                    <td>
-                      <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                        <Badge label={r.category||"Other"} colorMap={CAT_BG}/>
-                        {r.isDistributor && (
-                          <span style={{fontSize:10,background:"#FEF3E2",color:"#935A00",padding:"1px 7px",borderRadius:20,fontWeight:500,whiteSpace:"nowrap"}}>
-                            🏢 {r.distributorCompany||"Distributor"}
-                          </span>
-                        )}
-                      </div>
-                    </td>
+                    <td><Badge label={r.category||"Other"} colorMap={CAT_BG}/></td>
                     <td>
                       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                         <Badge label={r.status||"Open"} colorMap={STATUS_COLORS}/>
