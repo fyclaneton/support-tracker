@@ -192,7 +192,6 @@ export default async function handler(req, res) {
         q: plainQuery,
         maxResults: 15,
         pageToken,
-        fields: "threads/id,nextPageToken,resultCountEstimate",
       });
     } else {
       // First page — try category filter
@@ -200,7 +199,6 @@ export default async function handler(req, res) {
         userId: "me",
         q: categoryQuery,
         maxResults: 15,
-        fields: "threads/id,nextPageToken,resultCountEstimate",
       });
       // If category returns nothing, fall back to plain query
       if (!listRes.data.threads || listRes.data.threads.length === 0) {
@@ -208,7 +206,6 @@ export default async function handler(req, res) {
           userId: "me",
           q: plainQuery,
           maxResults: 15,
-          fields: "threads/id,nextPageToken,resultCountEstimate",
         });
       }
     }

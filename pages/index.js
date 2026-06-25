@@ -656,11 +656,10 @@ export default function Home() {
       .catch(e => console.error("Load saved error:", e))
       .finally(() => setSavedLoading(false));
 
-    // Step 2: Fetch last 3 months from this account's Gmail
-    // New threads get auto-saved to shared database via save-threads API
-    fetchThreads(null, false);
+    // Step 2: Fetch last 3 months from Gmail (small delay so analyzeThreads is ready)
+    const fetchTimer = setTimeout(() => fetchThreads(null, false), 500);
 
-    // Step 3: After 10 seconds, reload from Upstash to show newly saved threads
+    // Step 3: After 20 seconds, reload from Upstash to pick up newly saved threads
     const reloadTimer = setTimeout(() => {
       fetch("/api/saved-threads")
         .then(r => r.json())
@@ -673,8 +672,8 @@ export default function Home() {
         .catch(e => console.error("Delayed reload error:", e));
     }, 10000);
 
-    return () => clearTimeout(reloadTimer);
-  }, [session]);
+    return () => { clearTimeout(fetchTimer); clearTimeout(reloadTimer); };
+  }, [session, fetchThreads]);
   useEffect(() => {
     if (!session) return;
     syncTimer.current = setInterval(()=>fetchThreads(null,true), 2*60*1000);
