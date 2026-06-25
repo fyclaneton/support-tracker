@@ -73,6 +73,9 @@ function TimeChip({ hours }) {
 }
 
 // MODEL_ALIASES maps display name to alias for B series
+const REGIONS = ["Japan", "Korea", "Czech Republic", "United States", "Canada", "United Kingdom", "Other"];
+const REGION_FLAGS = { "Japan":"🇯🇵","Korea":"🇰🇷","Czech Republic":"🇨🇿","United States":"🇺🇸","Canada":"🇨🇦","United Kingdom":"🇬🇧","Other":"🌍" };
+
 const MODEL_ALIASES = {
   "B.22": "i2R 4", "B.23": "i2R 6", "B.24": "i2R 8",
 };
@@ -411,6 +414,7 @@ export default function Home() {
   const [filterCat, setFilterCat]         = useState("");
   const [filterStatus, setFilterStatus]   = useState("");
   const [filterFlag, setFilterFlag]       = useState("");
+  const [filterRegion, setFilterRegion]   = useState("");
   const [filterModel, setFilterModel]     = useState("");
   const [page, setPage]                   = useState(0);
   const [expandedId, setExpandedId]       = useState(null);
@@ -1061,6 +1065,7 @@ export default function Home() {
         category:     overrides[t.id]?.category     || (distEntry ? "Distributor" : t.category),
         machineModel: overrides[t.id]?.machineModel !== undefined ? overrides[t.id]?.machineModel : t.machineModel,
         distributorCompany: distEntry?.company || null,
+        region:       t.region || (distEntry?.region || null),
       };
     });
 
@@ -1118,7 +1123,7 @@ export default function Home() {
         </div>
         <div className={styles.headerRight}>
           {spamSenders.length>0 && <button className={styles.spamListBtn} onClick={()=>setShowSpamList(v=>!v)}>🚫 {spamSenders.length} blocked</button>}
-          {distributors.length>0 && <span style={{fontSize:12,color:"#935A00",background:"#FEF3E2",padding:"3px 10px",borderRadius:20,fontWeight:500}}>🏢 {distributors.length} distributor{distributors.length>1?"s":""}</span>}
+          <a href="/distributors" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>🏢 Distributors</a>
           <a href="/knowledge" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}} title="Knowledge Base">📚 KB</a>
           <button className={styles.spamListBtn} onClick={()=>setShowFilters(v=>!v)}>⚙️ Filters {filterRules.length>0?`(${filterRules.length})`:""}</button>
           {lastSync && <span className={styles.syncTime}>Synced {lastSync.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>}
@@ -1282,6 +1287,10 @@ export default function Home() {
             <option value="urgent">⚠️ Urgent</option>
             <option value="repeat">🔁 Repeat customer</option>
           </select>
+          <select className={styles.select} value={filterRegion} onChange={e=>{setFilterRegion(e.target.value);setPage(0);}}>
+            <option value="">All regions</option>
+            {REGIONS.map(r=><option key={r} value={r}>{REGION_FLAGS[r]} {r}</option>)}
+          </select>
         </div>
 
         {/* Export bar */}
@@ -1431,9 +1440,12 @@ export default function Home() {
                     </td>
                     <td style={{color:"var(--text-secondary)",fontSize:12}}>{r.date||"—"}</td>
                     <td>
-                      <button className={styles.customerLink} onClick={e=>{e.stopPropagation();setCustomerHistory(r.customer);}} title="View customer history">
-                        {r.customer}
-                      </button>
+                      <div style={{display:"flex",alignItems:"center",gap:5}}>
+                        <button className={styles.customerLink} onClick={e=>{e.stopPropagation();setCustomerHistory(r.customer);}} title="View customer history">
+                          {r.customer}
+                        </button>
+                        {r.region && REGION_FLAGS[r.region] && <span title={r.region} style={{fontSize:14}}>{REGION_FLAGS[r.region]}</span>}
+                      </div>
                       {!r.hasSent && r.hoursWaiting>24 && <div style={{marginTop:3}}><TimeChip hours={r.hoursWaiting}/></div>}
                     </td>
                     <td>

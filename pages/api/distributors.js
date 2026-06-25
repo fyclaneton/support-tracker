@@ -29,7 +29,8 @@ export default async function handler(req, res) {
     try {
       const list = await getList();
       const existing = list.findIndex(d => d.email.toLowerCase() === email.toLowerCase());
-      const entry = { email: email.toLowerCase(), name: name || email, company: company || "", addedBy: session.user?.email, addedAt: new Date().toISOString() };
+      const { region } = req.body;
+      const entry = { email: email.toLowerCase(), name: name || email, company: company || "", region: region || "", addedBy: session.user?.email, addedAt: new Date().toISOString() };
       if (existing >= 0) list[existing] = entry;
       else list.push(entry);
       await kvSet(KEY, list);
