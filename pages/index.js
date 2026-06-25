@@ -919,6 +919,20 @@ export default function Home() {
     } catch(e) { console.error(e); }
   }
 
+  async function reanalyzeFailed() {
+    setSpamToast("Finding threads with failed summaries…");
+    try {
+      const res = await fetch("/api/reanalyze-failed", { method:"POST" });
+      const data = await res.json();
+      if (data.ok) {
+        setSpamToast(`✓ Cleared ${data.cleared} failed summaries — reload to re-analyze.`);
+        setTimeout(() => setSpamToast(null), 5000);
+        // Reload from Upstash so the cleared threads show up for re-analysis
+        setTimeout(() => reloadFromSaved(), 1000);
+      }
+    } catch(e) { console.error(e); }
+  }
+
   async function reloadFromSaved() {
     setSavedLoading(true);
     try {
@@ -1458,6 +1472,9 @@ export default function Home() {
               <>
                 <button className={styles.btn} onClick={reloadFromSaved} disabled={savedLoading} title="Reload all threads from database">
                   {savedLoading ? "Loading…" : "↺ Reload"}
+                </button>
+                <button className={styles.btn} onClick={reanalyzeFailed} title="Re-analyze threads with failed AI summaries">
+                  🔄 Re-analyze failed
                 </button>
                 {threads.some(t=>!t.fetchedBy) && (
                   <button className={styles.btn} onClick={backfillAccount} title="Tag threads by their To: address">
