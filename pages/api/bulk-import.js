@@ -38,6 +38,22 @@ function extractCustomerEmail(messages) {
   return null;
 }
 
+function extractReceivedBy(messages) {
+  // Check To: and Delivered-To: headers to find which address received the email
+  for (const msg of messages) {
+    const headers = msg.payload?.headers || [];
+    const deliveredTo = headers.find(h => h.name === "Delivered-To")?.value || "";
+    const to = headers.find(h => h.name === "To")?.value || "";
+    const combined = (deliveredTo + " " + to).toLowerCase();
+    if (combined.includes("i2rcnc")) return "info@i2rcnc.com";
+    if (combined.includes("lanetonca")) {
+      const match = (deliveredTo || to).match(/([a-zA-Z0-9._%+\-]+@lanetonca\.com)/i);
+      return match ? match[1].toLowerCase() : "lanetonca.com";
+    }
+  }
+  return null;
+}
+
 function extractDate(messages) {
   const date = messages[0]?.payload?.headers?.find(h => h.name === "Date")?.value;
   if (!date) return null;
@@ -273,6 +289,7 @@ export default async function handler(req, res) {
         processed.push({
           id: t.id,
           fetchedBy: session.user?.email || null,
+          receivedBy: extractReceivedBy(messages),
           date: extractDate(messages),
           customer,
           customerEmail: extractCustomerEmail(messages),

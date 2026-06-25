@@ -902,8 +902,11 @@ export default function Home() {
       const data = await res.json();
       if (data.ok) {
         // Update local thread state with fetchedBy
-        setThreads(prev => prev.map(t => !t.fetchedBy ? { ...t, fetchedBy: session.user?.email } : t));
-        setSpamToast(`✓ Tagged ${data.tagged} threads as ${data.email}`);
+        // Reload from Upstash to get updated receivedBy values
+        fetch("/api/saved-threads").then(r=>r.json()).then(d=>{
+          if(d.threads?.length) setThreads(d.threads);
+        });
+        setSpamToast(`✓ Tagged ${data.tagged} threads with their received account.`);
         setTimeout(() => setSpamToast(null), 4000);
       }
     } catch(e) { console.error(e); }
@@ -1061,16 +1064,6 @@ export default function Home() {
     setDistThread(null);
   }
 
-  async function removeDistributor(email) {
-    try {
-      const res = await fetch("/api/distributors", {
-        method: "DELETE", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const data = await res.json();
-      if (data.distributors) setDistributors(data.distributors);
-    } catch(e) { console.error(e); }
-  }
 
   async function addFilterRule() {
     if (!newRuleValue.trim()) return;
@@ -1150,7 +1143,9 @@ export default function Home() {
       && (!filterModel  || r.machineModel===filterModel)
       && (!filterRegion || r.region===filterRegion)
       && (!filterDistributor || r.isDistributor===true)
-      && (!filterAccount || r.fetchedBy === filterAccount || (filterAccount === "__untagged__" && !r.fetchedBy));
+      && (!filterAccount || 
+          (r.receivedBy ? r.receivedBy === filterAccount : r.fetchedBy === filterAccount) ||
+          (filterAccount === "__untagged__" && !r.receivedBy && !r.fetchedBy));
   });
 
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
@@ -1206,11 +1201,11 @@ export default function Home() {
             title="Filter by inbox account"
           >
             <option value="">All inboxes</option>
-            {[...new Set(threads.map(t=>t.fetchedBy).filter(Boolean))].sort().map(acc=>(
+            {[...new Set(threads.map(t=>t.receivedBy||t.fetchedBy).filter(Boolean))].sort().map(acc=>(
               <option key={acc} value={acc}>{acc}</option>
             ))}
-            {threads.some(t=>!t.fetchedBy) && (
-              <option value="__untagged__">Untagged (pre-account tracking)</option>
+            {threads.some(t=>!t.receivedBy && !t.fetchedBy) && (
+              <option value="__untagged__">Untagged (run backfill to fix)</option>
             )}
           </select>
           <a href="/analytics" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>📊 Analytics</a>
@@ -1458,8 +1453,8 @@ export default function Home() {
                   {savedLoading ? "Loading…" : "↺ Reload"}
                 </button>
                 {threads.some(t=>!t.fetchedBy) && (
-                  <button className={styles.btn} onClick={backfillAccount} title={`Tag untagged threads as ${session.user?.email}`}>
-                    🏷 Tag as {session.user?.email?.split("@")[1]}
+                  <button className={styles.btn} onClick={backfillAccount} title="Tag threads by their To: address">
+                    🏷 Tag by received account
                   </button>
                 )}
                 {savedTotal > 0 && !migrationDone && (
