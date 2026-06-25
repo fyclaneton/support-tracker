@@ -178,7 +178,7 @@ function CustomerHistoryModal({ customer, threads, onClose }) {
 
 // ── Thread Detail Panel ──
 
-function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, onFlagNotService, onFlagDistributor, distributors, spamSenders, modelSeries, allModels }) {
+function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onOverride, onBlock, onFlagNotService, onFlagDistributor, onMarkJunk, distributors, spamSenders, modelSeries, allModels }) {
   const [draft, setDraft]                     = useState(null);
   const [draftLoading, setDraftLoading]       = useState(false);
   const [draftKbUsed, setDraftKbUsed]         = useState(0);
@@ -414,6 +414,12 @@ function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onO
               onClick={e=>{e.stopPropagation(); onFlagNotService(r.id);}}
               title="Remove — not relevant to our services">
               ✕ Unrelated
+            </button>
+            <button className={styles.notServiceBtn}
+              style={{background:"#F9ECEC",color:"#922B21",borderColor:"#922B21"}}
+              onClick={e=>{e.stopPropagation(); onMarkJunk&&onMarkJunk(r);}}
+              title="Mark as junk — blocks sender and removes thread permanently">
+              🗑 Junk
             </button>
           </div>
         </div>
@@ -676,9 +682,9 @@ export default function Home() {
   }, [session, fetchThreads]);
   useEffect(() => {
     if (!session) return;
-    syncTimer.current = setInterval(()=>fetchThreads(null,true), 2*60*1000);
+    syncTimer.current = setInterval(()=>{ if(fetchThreadsRef.current) fetchThreadsRef.current(null,true); }, 2*60*1000);
     return ()=>clearInterval(syncTimer.current);
-  }, [session, fetchThreads]);
+  }, [session]);
 
   async function setOverride(id, field, value) {
     // If marking as Resolved, also remove the no-reply flag
@@ -915,6 +921,30 @@ export default function Home() {
     }
 
     setBulkRunning(false);
+  }
+
+  // Mark as junk — blocks sender permanently + removes thread from dashboard
+  async function markAsJunk(thread) {
+    const email = thread.customerEmail || thread.customer;
+    if (!email || email === "Unknown") return;
+    // Remove from dashboard instantly
+    setThreads(prev => prev.filter(t => t.id !== thread.id));
+    setExpandedId(null);
+    setSpamToast(`"${email}" marked as junk — blocked permanently.`);
+    setTimeout(() => setSpamToast(null), 4000);
+    try {
+      // 1. Block the sender
+      await fetch("/api/spam-senders", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      setSpamSenders(prev => Array.isArray(prev) && !prev.includes(email) ? [...prev, email] : prev);
+      // 2. Remove thread from KV
+      await fetch("/api/flag-not-service", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadId: thread.id, action: "remove" }),
+      });
+    } catch(e) { console.error("Mark junk error:", e); }
   }
 
   // Mark Unrelated — removes from dashboard, Upstash, and Sheet immediately
@@ -1489,6 +1519,17 @@ export default function Home() {
                 Mark Open
               </button>
               <button className={styles.btn} onClick={()=>setSelectedIds(new Set())}>✕ Deselect</button>
+              <button className={styles.btn} style={{background:"#F9ECEC",color:"#922B21",borderColor:"#922B21"}} disabled={bulkUpdating}
+                onClick={async()=>{
+                  const ids=[...selectedIds];
+                  for(const id of ids){
+                    const t=allRows.find(r=>r.id===id);
+                    if(t) await markAsJunk(t);
+                  }
+                  setSelectedIds(new Set());
+                }}>
+                🗑 Mark all junk
+              </button>
             </div>
           </div>
         ) : null}
@@ -1572,7 +1613,7 @@ export default function Home() {
                   {expandedId===r.id&&(
                     <tr key={r.id+"-detail"}>
                       <td colSpan={7} style={{padding:"0 12px 14px",background:"var(--bg-secondary)"}}>
-                        <ThreadDetail r={r} overrides={overrides} savingId={savingId} sheetInfo={sheetInfo} threads={threads} session={session} onOverride={setOverride} onBlock={flagSenderAsSpam} onFlagNotService={flagNotOurService} onFlagDistributor={openDistributorModal} distributors={distributors} spamSenders={spamSenders} modelSeries={MODEL_SERIES} allModels={MACHINE_MODELS}/>
+                        <ThreadDetail r={r} overrides={overrides} savingId={savingId} sheetInfo={sheetInfo} threads={threads} session={session} onOverride={setOverride} onBlock={flagSenderAsSpam} onFlagNotService={flagNotOurService} onFlagDistributor={openDistributorModal} onMarkJunk={markAsJunk} distributors={distributors} spamSenders={spamSenders} modelSeries={MODEL_SERIES} allModels={MACHINE_MODELS}/>
                       </td>
                     </tr>
                   )}
