@@ -489,7 +489,7 @@ export default function Home() {
   const [filterFlag, setFilterFlag]       = useState("");
   const [filterRegion, setFilterRegion]   = useState("");
   const [filterDistributor, setFilterDistributor] = useState(false);
-  const [i2rOnly, setI2rOnly]                   = useState(false);
+  const [filterAccount, setFilterAccount]       = useState("");
   const [filterModel, setFilterModel]     = useState("");
   const [page, setPage]                   = useState(0);
   const [expandedId, setExpandedId]       = useState(null);
@@ -892,6 +892,23 @@ export default function Home() {
     } catch(e) { console.error("Remove thread error:", e); }
   }
 
+  async function backfillAccount() {
+    setSpamToast("Tagging saved threads with current account…");
+    try {
+      const res = await fetch("/api/backfill-account", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ email: session.user?.email }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        // Update local thread state with fetchedBy
+        setThreads(prev => prev.map(t => !t.fetchedBy ? { ...t, fetchedBy: session.user?.email } : t));
+        setSpamToast(`✓ Tagged ${data.tagged} threads as ${data.email}`);
+        setTimeout(() => setSpamToast(null), 4000);
+      }
+    } catch(e) { console.error(e); }
+  }
+
   async function reloadFromSaved() {
     setSavedLoading(true);
     try {
@@ -1133,7 +1150,7 @@ export default function Home() {
       && (!filterModel  || r.machineModel===filterModel)
       && (!filterRegion || r.region===filterRegion)
       && (!filterDistributor || r.isDistributor===true)
-      && (!i2rOnly || !r.fetchedBy || (r.fetchedBy||"").includes("i2rcnc"));
+      && (!filterAccount || r.fetchedBy === filterAccount || (!r.fetchedBy && filterAccount === "i2rcnc"));
   });
 
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
@@ -1181,18 +1198,19 @@ export default function Home() {
         </div>
         <div className={styles.headerRight}>
           {spamSenders.length>0 && <button className={styles.spamListBtn} onClick={()=>setShowSpamList(v=>!v)}>🚫 {spamSenders.length} blocked</button>}
-          <button
-            onClick={()=>setI2rOnly(v=>!v)}
-            style={{fontSize:12,padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6,cursor:"pointer",
-              background: i2rOnly ? "#E1F5EE" : "var(--bg)",
-              color: i2rOnly ? "#0F6E56" : "var(--text-secondary)",
-              borderColor: i2rOnly ? "#0F6E56" : "var(--border)",
-              fontWeight: i2rOnly ? 500 : 400,
-            }}
-            title={i2rOnly ? "Showing i2R CNC emails only" : "Click to show only info@i2rcnc.com emails"}
+          <select
+            className={styles.select}
+            style={{fontSize:12}}
+            value={filterAccount}
+            onChange={e=>{setFilterAccount(e.target.value);setPage(0);}}
+            title="Filter by inbox account"
           >
-            {i2rOnly ? "✓ i2R only" : "i2R only"}
-          </button>
+            <option value="">All inboxes</option>
+            {[...new Set(threads.map(t=>t.fetchedBy).filter(Boolean))].sort().map(acc=>(
+              <option key={acc} value={acc}>{acc}</option>
+            ))}
+            {threads.some(t=>!t.fetchedBy) && <option value="i2rcnc">info@i2rcnc.com (legacy)</option>}
+          </select>
           <a href="/analytics" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>📊 Analytics</a>
           <a href="/distributors" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>🏢 Distributors</a>
           <a href="/knowledge" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}} title="Knowledge Base">📚 KB</a>
@@ -1437,6 +1455,11 @@ export default function Home() {
                 <button className={styles.btn} onClick={reloadFromSaved} disabled={savedLoading} title="Reload all threads from database">
                   {savedLoading ? "Loading…" : "↺ Reload"}
                 </button>
+                {threads.some(t=>!t.fetchedBy) && (
+                  <button className={styles.btn} onClick={backfillAccount} title={`Tag untagged threads as ${session.user?.email}`}>
+                    🏷 Tag as {session.user?.email?.split("@")[1]}
+                  </button>
+                )}
                 {savedTotal > 0 && !migrationDone && (
                   <button className={styles.btn} onClick={migrateModels} title="Fix old i2R 4/6/8 tags to B.22/B.23/B.24">
                     🔧 Fix model tags
