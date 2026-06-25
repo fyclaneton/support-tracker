@@ -3,7 +3,7 @@ import { useSession, signIn, signOut } from "next-auth/react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import styles from "../styles/Home.module.css";
 
-const CATEGORIES = ["Software", "Hardware", "Setup", "Connectivity", "Warranty/Repair", "Sales inquiry", "Contact request", "Distributor", "Unrelated", "Other"];
+const CATEGORIES = ["Software", "Hardware", "Setup", "Connectivity", "Warranty/Repair", "Sales inquiry", "Contact request", "Unrelated", "Other"];
 const STATUSES = ["Open", "Pending", "Resolved"];
 // Full i2R model list
 const MACHINE_MODELS = [
@@ -36,7 +36,7 @@ const TEMPLATES = [
 const CAT_BG = {
   Software: { bg: "#EEEDFE", text: "#534AB7" }, Hardware: { bg: "#FAECE7", text: "#993C1D" },
   Setup: { bg: "#E1F5EE", text: "#0F6E56" }, Connectivity: { bg: "#FBEAF0", text: "#993556" },
-  "Contact request": { bg: "#F1EFE8", text: "#5F5E5A" }, "Warranty/Repair": { bg: "#FEF0EE", text: "#993C1D" }, "Distributor": { bg: "#FEF3E2", text: "#935A00" }, "Unrelated": { bg: "#F9ECEC", text: "#922B21" }, "Sales inquiry": { bg: "#E8F4FD", text: "#1A6B9E" }, Other: { bg: "#F1EFE8", text: "#5F5E5A" },
+  "Contact request": { bg: "#F1EFE8", text: "#5F5E5A" }, "Warranty/Repair": { bg: "#FEF0EE", text: "#993C1D" }, "Unrelated": { bg: "#F9ECEC", text: "#922B21" }, "Sales inquiry": { bg: "#E8F4FD", text: "#1A6B9E" }, Other: { bg: "#F1EFE8", text: "#5F5E5A" },
 };
 const STATUS_COLORS = {
   Open:     { bg: "#FAEEDA", text: "#854F0B" },
@@ -389,10 +389,11 @@ function DistributorModal({ thread, onSave, onClose }) {
   const [company, setCompany] = useState("");
   const [name, setName]       = useState(thread?.customer || "");
   const [email, setEmail]     = useState(thread?.customerEmail || "");
+  const [region, setRegion]   = useState("");
 
   function handleSave() {
     if (!email.trim()) return;
-    onSave(email.trim(), name.trim() || email.trim(), company.trim());
+    onSave(email.trim(), name.trim() || email.trim(), company.trim(), region);
   }
 
   return (
@@ -418,6 +419,13 @@ function DistributorModal({ thread, onSave, onClose }) {
             <p className={styles.detailLabel} style={{marginBottom:4}}>Company name</p>
             <input className={styles.searchInput} value={company} onChange={e=>setCompany(e.target.value)} placeholder="e.g. Simply Technologies" style={{width:"100%"}}/>
           </div>
+          <div>
+            <p className={styles.detailLabel} style={{marginBottom:4}}>Region</p>
+            <select className={styles.select} style={{width:"100%"}} value={region} onChange={e=>setRegion(e.target.value)}>
+              <option value="">Select region (optional)</option>
+              {REGIONS.map(r=><option key={r} value={r}>{REGION_FLAGS[r]} {r}</option>)}
+            </select>
+          </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4}}>
             <button className={styles.btn} onClick={onClose}>Cancel</button>
             <button className={styles.btn} style={{background:"#FEF3E2",color:"#935A00",borderColor:"#935A00"}} onClick={handleSave} disabled={!email.trim()}>
@@ -441,6 +449,7 @@ export default function Home() {
   const [filterStatus, setFilterStatus]   = useState("");
   const [filterFlag, setFilterFlag]       = useState("");
   const [filterRegion, setFilterRegion]   = useState("");
+  const [filterDistributor, setFilterDistributor] = useState(false);
   const [filterModel, setFilterModel]     = useState("");
   const [page, setPage]                   = useState(0);
   const [expandedId, setExpandedId]       = useState(null);
@@ -996,21 +1005,16 @@ export default function Home() {
     setShowDistModal(true);
   }
 
-  async function saveDistributor(email, name, company) {
+  async function saveDistributor(email, name, company, region) {
     try {
       const res = await fetch("/api/distributors", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, name, company }),
+        body: JSON.stringify({ email, name, company, region }),
       });
       const data = await res.json();
       if (data.distributors) setDistributors(data.distributors);
-      // Also mark all their current threads as Distributor category
-      setThreads(prev => prev.map(t =>
-        (t.customerEmail === email || t.customer === name)
-          ? { ...t, category: "Distributor" }
-          : t
-      ));
-      setSpamToast(`✓ ${name} (${company}) added as distributor — their threads are tagged.`);
+      // Threads keep their real category — isDistributor flag is computed in allRows
+      setSpamToast(`✓ ${name}${company ? " ("+company+")" : ""} flagged as distributor.`);
       setTimeout(() => setSpamToast(null), 4000);
     } catch(e) { console.error(e); }
     setShowDistModal(false);
@@ -1087,11 +1091,13 @@ export default function Home() {
       const distEntry = t.customerEmail ? distMap[t.customerEmail.toLowerCase()] : null;
       return {
         ...t,
-        status:       overrides[t.id]?.status       || t.status,
-        category:     overrides[t.id]?.category     || (distEntry ? "Distributor" : t.category),
-        machineModel: overrides[t.id]?.machineModel !== undefined ? overrides[t.id]?.machineModel : t.machineModel,
+        status:          overrides[t.id]?.status       || t.status,
+        category:        overrides[t.id]?.category     || t.category,
+        machineModel:    overrides[t.id]?.machineModel !== undefined ? overrides[t.id]?.machineModel : t.machineModel,
+        isDistributor:   !!distEntry,
         distributorCompany: distEntry?.company || null,
-        region:       t.region || (distEntry?.region || null),
+        distributorRegion:  distEntry?.region  || null,
+        region:          t.region || distEntry?.region || null,
       };
     });
 
@@ -1102,7 +1108,8 @@ export default function Home() {
       && (!filterStatus || r.status===filterStatus)
       && (!filterFlag   || (r.flags||[]).includes(filterFlag))
       && (!filterModel  || r.machineModel===filterModel)
-      && (!filterRegion || r.region===filterRegion);
+      && (!filterRegion || r.region===filterRegion)
+      && (!filterDistributor || r.isDistributor===true);
   });
 
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
@@ -1318,6 +1325,14 @@ export default function Home() {
             <option value="">All regions</option>
             {REGIONS.map(r=><option key={r} value={r}>{REGION_FLAGS[r]} {r}</option>)}
           </select>
+          <button
+            className={styles.btn}
+            style={filterDistributor ? {background:"#FEF3E2",color:"#935A00",borderColor:"#935A00"} : {}}
+            onClick={()=>{setFilterDistributor(v=>!v);setPage(0);}}
+            title="Show only distributor threads"
+          >
+            🏢 {filterDistributor ? "Distributors only" : "All senders"}
+          </button>
         </div>
 
         {/* Export bar */}
@@ -1490,7 +1505,16 @@ export default function Home() {
                         {r.distributorCompany && <span style={{fontSize:10,background:"#FEF3E2",color:"#935A00",padding:"1px 6px",borderRadius:20,fontWeight:500}}>🏢 {r.distributorCompany}</span>}
                       </div>
                     </td>
-                    <td><Badge label={r.category||"Other"} colorMap={CAT_BG}/></td>
+                    <td>
+                      <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                        <Badge label={r.category||"Other"} colorMap={CAT_BG}/>
+                        {r.isDistributor && (
+                          <span style={{fontSize:10,background:"#FEF3E2",color:"#935A00",padding:"1px 7px",borderRadius:20,fontWeight:500,whiteSpace:"nowrap"}}>
+                            🏢 {r.distributorCompany||"Distributor"}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td>
                       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                         <Badge label={r.status||"Open"} colorMap={STATUS_COLORS}/>
