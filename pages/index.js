@@ -374,7 +374,6 @@ function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onO
         </div>
         <div>
           <p className={styles.detailLabel} style={{ marginBottom: 4 }}>Region</p>
-          <div style={{position:"relative"}}>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <select className={styles.select} value={region||""} onChange={e=>saveRegion(e.target.value)}>
               <option value="">Unknown</option>
