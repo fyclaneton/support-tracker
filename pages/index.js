@@ -374,6 +374,7 @@ function ThreadDetail({ r, overrides, savingId, sheetInfo, threads, session, onO
         </div>
         <div>
           <p className={styles.detailLabel} style={{ marginBottom: 4 }}>Region</p>
+          <div style={{position:"relative"}}>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <select className={styles.select} value={region||""} onChange={e=>saveRegion(e.target.value)}>
               <option value="">Unknown</option>
@@ -490,6 +491,9 @@ export default function Home() {
   const [filterRegion, setFilterRegion]   = useState("");
   const [filterDistributor, setFilterDistributor] = useState(false);
   const [filterAccount, setFilterAccount]       = useState("");
+  const [showAccountMgr, setShowAccountMgr]   = useState(false);
+  const [accountCounts, setAccountCounts]     = useState({});
+  const [accountMgrLoading, setAccountMgrLoading] = useState(false);
   const [filterModel, setFilterModel]     = useState("");
   const [page, setPage]                   = useState(0);
   const [expandedId, setExpandedId]       = useState(null);
@@ -899,6 +903,39 @@ export default function Home() {
     } catch(e) { console.error("Remove thread error:", e); }
   }
 
+  async function loadAccountCounts() {
+    setAccountMgrLoading(true);
+    try {
+      const res = await fetch("/api/manage-accounts");
+      const data = await res.json();
+      if (data.accounts) setAccountCounts(data.accounts);
+    } catch(e) { console.error(e); }
+    finally { setAccountMgrLoading(false); }
+  }
+
+  async function removeAccountTag(account, replaceWith) {
+    try {
+      const res = await fetch("/api/manage-accounts", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ removeAccount: account, replaceWith: replaceWith || null }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setSpamToast(`✓ Removed tag "${account}" from ${data.updated} threads.`);
+        setTimeout(() => setSpamToast(null), 4000);
+        // Update local state
+        setThreads(prev => prev.map(t =>
+          (t.receivedBy === account || t.fetchedBy === account)
+            ? { ...t, receivedBy: replaceWith || null, fetchedBy: replaceWith || null }
+            : t
+        ));
+        // Reload counts
+        await loadAccountCounts();
+        if (filterAccount === account) setFilterAccount(replaceWith || "");
+      }
+    } catch(e) { console.error(e); }
+  }
+
   async function backfillAccount() {
     setSpamToast("Tagging saved threads with current account…");
     try {
@@ -1220,19 +1257,69 @@ export default function Home() {
         </div>
         <div className={styles.headerRight}>
           {spamSenders.length>0 && <button className={styles.spamListBtn} onClick={()=>setShowSpamList(v=>!v)}>🚫 {spamSenders.length} blocked</button>}
-          <select
-            className={styles.select}
-            style={{fontSize:12}}
-            value={filterAccount}
-            onChange={e=>{setFilterAccount(e.target.value);setPage(0);}}
-            title="Filter by inbox account"
-          >
-            <option value="">All inboxes</option>
-            <option value="info@i2rcnc.com">info@i2rcnc.com</option>
-            {[...new Set(threads.map(t=>t.receivedBy||t.fetchedBy).filter(Boolean))].filter(acc=>acc!=="info@i2rcnc.com").sort().map(acc=>(
-              <option key={acc} value={acc}>{acc}</option>
-            ))}
-          </select>
+          <div style={{position:"relative"}}>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            <select
+              className={styles.select}
+              style={{fontSize:12}}
+              value={filterAccount}
+              onChange={e=>{setFilterAccount(e.target.value);setPage(0);}}
+              title="Filter by inbox account"
+            >
+              <option value="">All inboxes</option>
+              <option value="info@i2rcnc.com">info@i2rcnc.com</option>
+              {[...new Set(threads.map(t=>t.receivedBy||t.fetchedBy).filter(Boolean))].filter(acc=>acc!=="info@i2rcnc.com").sort().map(acc=>(
+                <option key={acc} value={acc}>{acc}</option>
+              ))}
+            </select>
+            <button
+              className={styles.btn}
+              style={{fontSize:11,padding:"4px 8px"}}
+              title="Manage inbox account tags"
+              onClick={()=>{ setShowAccountMgr(v=>!v); if(!showAccountMgr) loadAccountCounts(); }}
+            >⚙️</button>
+          </div>
+          </div>
+          {showAccountMgr && (
+            <div style={{position:"absolute",top:"100%",right:0,zIndex:200,background:"var(--bg)",border:"0.5px solid var(--border)",borderRadius:"var(--radius)",boxShadow:"0 4px 20px rgba(0,0,0,0.15)",padding:"12px 16px",minWidth:340,marginTop:4}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <p style={{fontSize:13,fontWeight:600,margin:0}}>Manage inbox tags</p>
+                <button onClick={()=>setShowAccountMgr(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:"var(--text-secondary)"}}>×</button>
+              </div>
+              {accountMgrLoading ? (
+                <p style={{fontSize:12,color:"var(--text-secondary)"}}>Loading…</p>
+              ) : Object.keys(accountCounts).length === 0 ? (
+                <p style={{fontSize:12,color:"var(--text-secondary)"}}>No account tags found. Run backfill first.</p>
+              ) : (
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {Object.entries(accountCounts).sort((a,b)=>b[1]-a[1]).map(([acct, count]) => (
+                    <div key={acct} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"0.5px solid var(--border)"}}>
+                      <div style={{flex:1}}>
+                        <span style={{fontSize:12,fontWeight:500}}>{acct === "__untagged__" ? "Untagged threads" : acct}</span>
+                        <span style={{fontSize:11,color:"var(--text-secondary)",marginLeft:6}}>{count} threads</span>
+                      </div>
+                      {acct !== "__untagged__" && acct !== "info@i2rcnc.com" && (
+                        <div style={{display:"flex",gap:4}}>
+                          <button
+                            className={styles.btn}
+                            style={{fontSize:11,padding:"3px 8px",background:"#E1F5EE",color:"#0F6E56",borderColor:"#0F6E56"}}
+                            onClick={()=>removeAccountTag(acct, "info@i2rcnc.com")}
+                            title={`Reassign ${count} threads to info@i2rcnc.com`}
+                          >→ i2rcnc</button>
+                          <button
+                            className={styles.btn}
+                            style={{fontSize:11,padding:"3px 8px",background:"#F9ECEC",color:"#922B21",borderColor:"#922B21"}}
+                            onClick={()=>{ if(window.confirm(`Remove tag "${acct}" from ${count} threads? They'll become untagged.`)) removeAccountTag(acct, null); }}
+                            title={`Remove tag from ${count} threads`}
+                          >✕ Remove</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <a href="/analytics" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>📊 Analytics</a>
           <a href="/distributors" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>🏢 Distributors</a>
           <a href="/knowledge" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}} title="Knowledge Base">📚 KB</a>
