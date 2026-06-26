@@ -1213,9 +1213,10 @@ export default function Home() {
 
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
   const pageRows   = filtered.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE);
+  // Use allRows for stats/charts (full picture, not filtered view)
   const catCounts  = {};
   allRows.forEach(r => {
-    const c = r.category && r.category !== "null" && r.category !== "undefined" ? r.category : "Other";
+    const c = (r.category && r.category !== "null" && r.category !== "undefined") ? r.category : "Other";
     catCounts[c] = (catCounts[c]||0) + 1;
   });
   const maxCat = Math.max(...Object.values(catCounts), 1);
@@ -1223,10 +1224,15 @@ export default function Home() {
   allRows.forEach(r=>{ if(statusCounts[r.status]!==undefined) statusCounts[r.status]++; });
   const flaggedCount = allRows.filter(r=>r.flags?.length>0).length;
   const urgentWaiting = allRows.filter(r=>!r.hasSent && r.hoursWaiting>24).length;
-  // Top issue excludes "Other" to show most meaningful category
   const topCat = Object.entries(catCounts)
     .filter(([k]) => k && k !== "Other" && k !== "Unrelated")
     .sort((a,b)=>b[1]-a[1])[0]?.[0] || "—";
+  // Count per category for the filtered view (what user is looking at)
+  const filteredCatCounts = {};
+  filtered.forEach(r => {
+    const c = (r.category && r.category !== "null" && r.category !== "undefined") ? r.category : "Other";
+    filteredCatCounts[c] = (filteredCatCounts[c]||0) + 1;
+  });
 
   if (status==="loading") return <div className={styles.centered}><div className={styles.spinner}/></div>;
 
@@ -1453,7 +1459,13 @@ export default function Home() {
         <div className={styles.chartRow}>
           <div className={styles.chartCard}>
             <p className={styles.chartTitle}>Issues by category</p>
-            {CATEGORIES.map(c=><MiniBar key={c} label={c} value={catCounts[c]||0} max={maxCat} color={CAT_CHART_COLORS[c]}/>)}
+            {CATEGORIES.map(c=>{
+              // Use filtered counts when account/region/distributor filter is active
+              const hasNonCatFilter = filterAccount || filterRegion || filterDistributor || search;
+              const count = hasNonCatFilter ? (filteredCatCounts[c]||0) : (catCounts[c]||0);
+              const max = hasNonCatFilter ? Math.max(...Object.values(filteredCatCounts),1) : maxCat;
+              return <MiniBar key={c} label={c} value={count} max={max} color={CAT_CHART_COLORS[c]}/>;
+            })}
           </div>
           <div className={styles.chartCard}>
             <p className={styles.chartTitle}>Status breakdown</p>
