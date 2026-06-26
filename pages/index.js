@@ -1164,10 +1164,15 @@ export default function Home() {
       && (!filterModel  || r.machineModel===filterModel)
       && (!filterRegion || r.region===filterRegion)
       && (!filterDistributor || r.isDistributor===true)
-      && (!filterAccount || 
-          r.receivedBy === filterAccount ||
-          r.fetchedBy === filterAccount ||
-          (!r.receivedBy && !r.fetchedBy && filterAccount === "info@i2rcnc.com"));
+      && (!filterAccount || (() => {
+          const acct = r.receivedBy || r.fetchedBy || null;
+          // No account tag = treat as i2rcnc (imported before tagging was added)
+          if (!acct) return filterAccount === "info@i2rcnc.com";
+          // Exact match
+          if (acct === filterAccount) return true;
+          // Partial match on domain (e.g. "lanetonca" matches "fuyangchang@lanetonca.com")
+          return filterAccount.includes(acct.split("@")[1] || "") || acct.includes(filterAccount.split("@")[1] || "");
+        })());
   });
 
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
@@ -1475,11 +1480,9 @@ export default function Home() {
                 <button className={styles.btn} onClick={reanalyzeFailed} title="Find threads where AI summary failed and queue them for re-analysis">
                   🤖 Fix missing summaries
                 </button>
-                {threads.some(t=>!t.fetchedBy) && (
-                  <button className={styles.btn} onClick={backfillAccount} title="Tag threads by their To: address">
-                    🏷 Tag by received account
-                  </button>
-                )}
+                <button className={styles.btn} onClick={backfillAccount} title="Tag all threads with the email address they were received at">
+                  🏷 Tag by received account
+                </button>
                 {savedTotal > 0 && !migrationDone && (
                   <button className={styles.btn} onClick={migrateModels} title="Fix old i2R 4/6/8 tags to B.22/B.23/B.24">
                     🔧 Fix model tags
