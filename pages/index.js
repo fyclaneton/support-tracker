@@ -1214,13 +1214,19 @@ export default function Home() {
   const totalPages = Math.ceil(filtered.length/PAGE_SIZE);
   const pageRows   = filtered.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE);
   const catCounts  = {};
-  allRows.forEach(r=>{ catCounts[r.category]=(catCounts[r.category]||0)+1; });
-  const maxCat = Math.max(...Object.values(catCounts),1);
+  allRows.forEach(r => {
+    const c = r.category && r.category !== "null" && r.category !== "undefined" ? r.category : "Other";
+    catCounts[c] = (catCounts[c]||0) + 1;
+  });
+  const maxCat = Math.max(...Object.values(catCounts), 1);
   const statusCounts = { Open:0, Pending:0, Resolved:0 };
   allRows.forEach(r=>{ if(statusCounts[r.status]!==undefined) statusCounts[r.status]++; });
   const flaggedCount = allRows.filter(r=>r.flags?.length>0).length;
   const urgentWaiting = allRows.filter(r=>!r.hasSent && r.hoursWaiting>24).length;
-  const topCat = Object.entries(catCounts).sort((a,b)=>b[1]-a[1])[0]?.[0]||"—";
+  // Top issue excludes "Other" to show most meaningful category
+  const topCat = Object.entries(catCounts)
+    .filter(([k]) => k && k !== "Other" && k !== "Unrelated")
+    .sort((a,b)=>b[1]-a[1])[0]?.[0] || "—";
 
   if (status==="loading") return <div className={styles.centered}><div className={styles.spinner}/></div>;
 
@@ -1569,8 +1575,8 @@ export default function Home() {
                 <button className={styles.btn} onClick={backfillAccount} title="Tag all threads with the email address they were received at">
                   🏷 Tag by received account
                 </button>
-                {savedTotal > 0 && !migrationDone && (
-                  <button className={styles.btn} onClick={migrateModels} title="Fix old i2R 4/6/8 tags to B.22/B.23/B.24">
+                {savedTotal > 0 && (
+                  <button className={styles.btn} onClick={migrateModels} title="Normalize all machine model tags to standard format">
                     🔧 Fix model tags
                   </button>
                 )}

@@ -10,15 +10,20 @@ const MODEL_ALIASES = { "B.22":"i2R 4","B.23":"i2R 6","B.24":"i2R 8" };
 function fmt(m) { return MODEL_ALIASES[m] ? `${m} (${MODEL_ALIASES[m]})` : m; }
 
 function Bar({ label, value, max, color, pct }) {
+  const pctWidth = Math.max(Math.round((value/(max||1))*100), value > 0 ? 2 : 0);
+  const showInside = pctWidth > 12; // only show count inside bar if wide enough
   return (
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
       <span style={{width:140,fontSize:12,color:"var(--text-secondary)",textAlign:"right",flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
-      <div style={{flex:1,background:"var(--bg-secondary)",borderRadius:4,height:18,overflow:"hidden"}}>
-        <div style={{width:`${Math.round((value/(max||1))*100)}%`,height:"100%",background:color||"#185FA5",borderRadius:4,transition:"width 0.5s",display:"flex",alignItems:"center",paddingLeft:6}}>
-          {value > 0 && <span style={{fontSize:10,color:"#fff",fontWeight:600,whiteSpace:"nowrap"}}>{value}</span>}
+      <div style={{flex:1,background:"var(--bg-secondary)",borderRadius:4,height:20,overflow:"visible",position:"relative"}}>
+        <div style={{width:`${pctWidth}%`,height:"100%",background:color||"#185FA5",borderRadius:4,transition:"width 0.5s",minWidth: value > 0 ? 4 : 0,display:"flex",alignItems:"center",paddingLeft:showInside?6:0}}>
+          {showInside && <span style={{fontSize:10,color:"#fff",fontWeight:600,whiteSpace:"nowrap"}}>{value}</span>}
         </div>
+        {!showInside && value > 0 && (
+          <span style={{position:"absolute",left:`calc(${pctWidth}% + 6px)`,top:"50%",transform:"translateY(-50%)",fontSize:11,color:"var(--text-primary)",fontWeight:600,whiteSpace:"nowrap"}}>{value}</span>
+        )}
       </div>
-      {pct !== undefined && <span style={{fontSize:11,color:"var(--text-secondary)",width:36,flexShrink:0}}>{pct}%</span>}
+      <span style={{fontSize:11,color:"var(--text-secondary)",width:36,flexShrink:0,textAlign:"right"}}>{pct !== undefined ? `${pct}%` : ""}</span>
     </div>
   );
 }
@@ -66,10 +71,17 @@ export default function Analytics() {
   const resolved = data.filter(t => t.status === "Resolved");
   const open = data.filter(t => t.status === "Open");
   const resolutionRate = data.length ? Math.round((resolved.length / data.length) * 100) : 0;
+  const topIssue = Object.entries(
+    data.reduce((acc, t) => {
+      const c = (t.category && t.category !== "null" && t.category !== "undefined" && t.category !== "Other") ? t.category : null;
+      if (c) acc[c] = (acc[c]||0)+1;
+      return acc;
+    }, {})
+  ).sort((a,b)=>b[1]-a[1])[0]?.[0] || "—";
 
   // Category breakdown
   const byCat = {};
-  data.forEach(t => { const c = t.category || "Other"; byCat[c] = (byCat[c]||0) + 1; });
+  data.forEach(t => { const c = (t.category && t.category !== 'null' && t.category !== 'undefined') ? t.category : "Other"; byCat[c] = (byCat[c]||0) + 1; });
   const sortedCats = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
   const maxCat = Math.max(...Object.values(byCat), 1);
 
@@ -143,6 +155,7 @@ export default function Analytics() {
               <Card title="Open" value={open.length} color="#BA7517" sub="Needs response"/>
               <Card title="Unique customers" value={Object.keys(customerCounts).length}/>
               <Card title="Repeat customers" value={repeatCustomers.length} sub="2+ threads"/>
+              <Card title="Top issue" value={topIssue} sub="Most common category"/>
             </div>
 
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"1.5rem",marginBottom:"1.5rem"}}>
