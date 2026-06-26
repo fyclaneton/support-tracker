@@ -1258,30 +1258,29 @@ export default function Home() {
         <div className={styles.headerRight}>
           {spamSenders.length>0 && <button className={styles.spamListBtn} onClick={()=>setShowSpamList(v=>!v)}>🚫 {spamSenders.length} blocked</button>}
           <div style={{position:"relative"}}>
-          <div style={{display:"flex",gap:6,alignItems:"center"}}>
-            <select
-              className={styles.select}
-              style={{fontSize:12}}
-              value={filterAccount}
-              onChange={e=>{setFilterAccount(e.target.value);setPage(0);}}
-              title="Filter by inbox account"
-            >
-              <option value="">All inboxes</option>
-              <option value="info@i2rcnc.com">info@i2rcnc.com</option>
-              {[...new Set(threads.map(t=>t.receivedBy||t.fetchedBy).filter(Boolean))].filter(acc=>acc!=="info@i2rcnc.com").sort().map(acc=>(
-                <option key={acc} value={acc}>{acc}</option>
-              ))}
-            </select>
-            <button
-              className={styles.btn}
-              style={{fontSize:11,padding:"4px 8px"}}
-              title="Manage inbox account tags"
-              onClick={()=>{ setShowAccountMgr(v=>!v); if(!showAccountMgr) loadAccountCounts(); }}
-            >⚙️</button>
-          </div>
-          </div>
-          {showAccountMgr && (
-            <div style={{position:"absolute",top:"100%",right:0,zIndex:200,background:"var(--bg)",border:"0.5px solid var(--border)",borderRadius:"var(--radius)",boxShadow:"0 4px 20px rgba(0,0,0,0.15)",padding:"12px 16px",minWidth:340,marginTop:4}}>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <select
+                className={styles.select}
+                style={{fontSize:12}}
+                value={filterAccount}
+                onChange={e=>{setFilterAccount(e.target.value);setPage(0);}}
+                title="Filter by inbox account"
+              >
+                <option value="">All inboxes</option>
+                <option value="info@i2rcnc.com">info@i2rcnc.com</option>
+                {[...new Set(threads.map(t=>t.receivedBy||t.fetchedBy).filter(Boolean))].filter(acc=>acc!=="info@i2rcnc.com").sort().map(acc=>(
+                  <option key={acc} value={acc}>{acc}</option>
+                ))}
+              </select>
+              <button
+                className={styles.btn}
+                style={{fontSize:11,padding:"4px 8px"}}
+                title="Manage inbox account tags"
+                onClick={()=>{ setShowAccountMgr(v=>!v); if(!showAccountMgr) loadAccountCounts(); }}
+              >⚙️</button>
+            </div>
+            {showAccountMgr && (
+              <div style={{position:"absolute",top:"100%",right:0,zIndex:200,background:"var(--bg)",border:"0.5px solid var(--border)",borderRadius:"var(--radius)",boxShadow:"0 4px 20px rgba(0,0,0,0.15)",padding:"12px 16px",minWidth:340,marginTop:4}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                 <p style={{fontSize:13,fontWeight:600,margin:0}}>Manage inbox tags</p>
                 <button onClick={()=>setShowAccountMgr(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:"var(--text-secondary)"}}>×</button>
@@ -1318,8 +1317,9 @@ export default function Home() {
                   ))}
                 </div>
               )}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
           <a href="/analytics" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>📊 Analytics</a>
           <a href="/distributors" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}}>🏢 Distributors</a>
           <a href="/knowledge" style={{fontSize:12,color:"var(--text-secondary)",textDecoration:"none",padding:"4px 10px",border:"0.5px solid var(--border)",borderRadius:6}} title="Knowledge Base">📚 KB</a>
